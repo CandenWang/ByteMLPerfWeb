@@ -1,0 +1,556 @@
+---
+title: 'Building Open Source AI Hardware Evaluation Tools, ByteMLPerf-v1.0 X a CoreX, Playing to Strengths is Key'
+date: 2025-11-21
+weight: 2
+keywords: ['ByteMLPerf', 'a CoreX']
+---
+
+import image1 from '../../public/blog/ts/image1.png';
+import image2 from '../../public/blog/ts/image2.png';
+import image3 from '../../public/blog/ts/image3.png';
+import image4 from '../../public/blog/ts/image4.png';
+import image5 from '../../public/blog/ts/image5.png';
+import image6 from '../../public/blog/ts/image6.png';
+import image7 from '../../public/blog/ts/image7.png';
+import image8 from '../../public/blog/ts/image8.png';
+import image9 from '../../public/blog/ts/image9.png';
+import image10 from '../../public/blog/ts/image10.png';
+import image11 from '../../public/blog/ts/image11.png';
+import image12 from '../../public/blog/ts/image12.png';
+import image13 from '../../public/blog/ts/image13.png';
+import image14 from '../../public/blog/ts/image14.png';
+
+# Building Open Source AI Hardware Evaluation Tools, ByteMLPerf-v1.0 X a CoreX, Playing to Strengths is Key
+
+## 1. Introduction - Evaluation Methodology
+
+Computer system evaluation and performance analysis aims to use measurement, simulation, and other tools to obtain performance characteristics of computers when executing tasks, identify performance bottlenecks, and thus achieve an assessment of computer systems. This blog plans to conduct a system evaluation of an a CoreX a chip (hereinafter referred to as "a chip") based on this methodology. By testing the chip's performance in multiple dimensions such as instructions, operators, and models in stages, it helps readers gain a deeper understanding of the chip's architecture, performance, and usage methods, exploring more efficient architectures and usage patterns.
+
+<img src={image1} alt="image1"></img>
+
+This blog will conduct a systematic evaluation in two major directions: hardware capabilities and software optimization. Hardware capabilities cover single-chip hardware architecture (such as computing architecture, memory hierarchy architecture, on-chip interconnection architecture, etc.) and multi-chip interconnection architecture (including communication topology between hardware components, communication interfaces, communication protocols, etc.). Software optimization includes multi-dimensional optimization means such as graph optimization, operator optimization, and instruction compilation optimization. The overall evaluation performance indicators include instruction throughput and latency, memory access throughput and latency, operator efficiency, and collective communication throughput and latency, aiming to quantify the hardware's performance in different computing and communication tasks.
+
+Specifically, this blog will present the actual quantitative evaluation process: First, compare hardware parameters (computing power, memory capacity, interconnection bandwidth) from a theoretical and analytical level, and analyze the communication topology; second, test classic instructions and operators (such as compute-intensive, memory-intensive, communication-intensive, etc.) at the single-chip level; finally, select appropriate parallel strategies (such as Tensor Parallelism (TP), Pipeline Parallelism (PP)) at the multi-chip level, and verify throughput on actual models (LLaMA, DeepSeek R1) to comprehensively evaluate the effectiveness of hardware performance and optimization strategies.
+
+## 2. Hardware Architecture Analysis
+
+### **2.1** **Architecture Parameter Analysis**
+
+The a CoreX a chip belongs to the general-purpose GPU architecture type, used for general computing and AI acceleration. In terms of the number of computing units, the number of streaming multiprocessors in the a chip is slightly less than that of the A800. Supported data types include FP32, FP16, INT8, etc., and FP8 and FP4 are supported at the software level. In terms of inter-card interconnection, the a chip uses PCIe-Switch for inter-card interconnection, which can achieve multi-card cascading and meet the needs of medium-scale joint work to a certain extent. Its interconnection strategy is more suitable for task types with relatively light communication, such as parallel computing in the model inference stage or local compute-intensive scenarios. In terms of cache and on-chip storage structure, the a chip provides a multi-level cache system, including L1, L2, and shared memory, but the structural details are different from the A800, which can reduce data access latency to a certain extent and provide better local data reuse capabilities for intensive operators.
+
+In addition, we analyze a key indicator, namely the FP32 vector to FP16 matrix computing power ratio. This indicator can reflect the trade-offs made during chip design and also explain the high efficiency of the a chip. The computing power ratio of the a chip is 12.2%, while that of the A800 is 6.25%. It can be seen that the ratio of the a chip is almost twice that of the A800 (this is greatly beneficial for the acceleration of FA operators in large models).
+
+### 2.2 a Architecture Analysis and Comparison
+
+The a chip and NVIDIA A800 80GB SXM adopt a similar a architecture, compatible with concepts such as GPU Processing Cluster, Texture Processing Cluster, Streaming Multiprocessor, Tensor Core, and Cuda Core. The computing hierarchy is GPC-TPC-SM-Cuda/Tensor Core. A single a chip contains 4 GPU Processing Clusters (GPC), each GPC contains 4 Texture Processing Clusters (TPC), each TPC contains 4 Streaming Multiprocessors (SM), and each SM has corresponding Tensor Cores/Vector Cores. The chip's memory hierarchy consists of external memory, on-chip L2 cache, and L1 cache/shared memory. L2 and L1/shared memory are connected in a Crossbar manner, and every 4 SMs share one L1/shared memory to save L2-L1/shared memory wiring resources.
+
+Compared with NVIDIA A800, A800 has 8 GPCs, each GPC has 8 TPCs, each TPC has 2 SMs, and the entire chip has **128** SMs (there is also a 108 SMs version). So from the perspective of SM, **the a chip is about 50% of the A800 (the computing power within each SM under FP16 data precision is 50% of the A800)**.
+
+From the perspective of memory hierarchy architecture, the a chip has 64GB external memory, 16MB L2 cache, and 192KB L1 cache/shared memory. In the corresponding architecture of A800, each NV SM exclusively enjoys a 192KB L1 storage. **a's advantage is that 4 SMs share one L1 for data sharing, reducing the bandwidth demand for L2, thereby reducing wiring requirements**.
+
+<div style={{ display: 'flex', gap: '2px', justifyContent: 'center' }}>
+  <div style={{ textAlign: 'center' }}>
+    <img
+      src={image2}
+      alt="image2"
+    />
+    <div style={{
+      marginTop: '8px',
+      fontSize: '14px',
+      color: '#666',
+      fontStyle: 'italic'
+    }}>
+      a Chip Hardware Architecture
+    </div>
+  </div>
+
+  <div style={{ textAlign: 'center' }}>
+    <img
+      src={image3}
+      alt="image3"
+    />
+    <div style={{
+      marginTop: '8px',
+      fontSize: '14px',
+      color: '#666',
+      fontStyle: 'italic'
+    }}>
+      NVIDIA A800 Chip Hardware Architecture [Reference White Paper]
+    </div>
+  </div>
+</div>
+
+### 2.3 Single SM Hardware Architecture Analysis and Comparison
+
+The left figure below shows the hardware architecture of a single Streaming Multiprocessor (SM) of the a chip, and the right figure presents the SM hardware architecture of the NVIDIA A800 GPU. The similarity between the two lies in that the Tensor Cores (compatible with Tensor Core) and Vector Cores (compatible with cuda core, including Special Function Units, SFU) in the SMs of these two chips are separated, can execute tasks in parallel, and can achieve data sharing, which is very beneficial for exploring data reusability.
+
+<div style={{ display: 'flex', gap: '32px', justifyContent: 'center' }}>
+  <div style={{ textAlign: 'center' }}>
+    <img
+      src={image4}
+      alt="image4"
+    />
+    <div style={{
+      marginTop: '8px',
+      fontSize: '14px',
+      color: '#666',
+      fontStyle: 'italic'
+    }}>
+      a Single SM Hardware Architecture
+    </div>
+  </div>
+
+  <div style={{ textAlign: 'center' }}>
+    <img
+      src={image5}
+      alt="image5"
+    />
+    <div style={{
+      marginTop: '8px',
+      fontSize: '14px',
+      color: '#666',
+      fontStyle: 'italic'
+    }}>
+      NVIDIA A800 Single SM Hardware Architecture [Reference White Paper]
+    </div>
+  </div>
+</div>
+
+The differences between the two chips are reflected in the details. Each A800 SM contains 4 Tensor Cores, and each Tensor Core can perform 256 half-precision floating-point (FP16) Fused Multiply-Add (FMA) operations per clock cycle, so each SM can perform 1024 dense FMA operations. An a SM is equipped with 8 Tensor Cores, and each Tensor Core can perform 64 FP16 FMA operations per clock cycle, so each SM can perform 512 dense FMA operations. At the same time, considering that there is no need to support scientific computing applications and focusing on large language models, the a chip has removed support for double-precision floating-point (FP64).
+
+At the scheduling level, a uses one scheduler and one Scalar ALU to complete the computing scheduling of 4 cores within a single SM. A800 uses 4 Warp Schedulers to achieve the scheduling of 4 cores within a single SM. From these design choices, A800's scheduling method is more flexible, while a's chip saves more chip area used for schedulers.
+
+### 2.4 Architecture Highlights
+
+The architecture design of the a chip has the following architectural advantages:
+
+- Adopts a architecture and considers CUDA compatibility in design, so it can efficiently support the CUDA framework and related ecosystems, quickly adapt to new models in the AI field, and has strong adaptability in AI and other fields.
+- High cache reuse efficiency. Through ingenious hardware hierarchical design, efficient shared memory similar to DSM on H100 is achieved, and access latency is significantly lower than H100. Therefore, the a chip can provide greater computing power with lower power consumption and smaller area.
+- High scheduling support, supporting highly customized communication and calculation processes, good support for communication-computation fusion, operator fusion, and flexible scheduling of different kernels, making it easy to maximize hardware utilization through software optimization.
+- Compared with A800, designs such as SME Engine (an asynchronous DMA engine) and Scalar Unit can achieve higher computing and memory access efficiency with lower energy consumption, and can efficiently support non-k-major int8 format matrix operations at the hardware level.
+
+## 3. Software Optimization Analysis
+
+### 3.1 CUDA-like Programming Ecosystem
+
+The a chip adopts an asynchronous programming model consistent with CUDA, providing a highly compatible development experience in CUDA/C++ syntax, computing network division (grid, block, warp), and computing stream control (stream). At the same time, through excellent software-hardware collaboration capabilities, it achieves fine-grained control over underlying hardware resources, maximizing the use of every computing resource.
+
+Taking computing stream as an example: In software, it supports the asynchronous process of launch -> execute -> wait compatible with CUDA stream form; in hardware, the a chip has multiple streaming scheduling units, which can dynamically distribute computing blocks and communication tasks of different streams according to task attributes. Users can maximize SM efficiency and computing/communication capabilities through multi-stream control. The a chip also supports features compatible with CUDA Graph, which can significantly improve scheduling efficiency for inference scenarios requiring low latency and high throughput.
+
+The figure below shows the software stack architecture of the a GPU, which is compatible with the vast majority of the cuda ecosystem. The difference is mainly special instructions designed to achieve higher hardware efficiency, such as shared memory engine instructions similar to cp.async, and high-efficiency tensor core instructions.
+
+<img src={image6} alt="image6"></img>
+
+### 3.2 "Knowing How to Use" is Key
+
+Although A800's paper data is slightly better, practice is the only criterion for testing truth. How the actual performance of the two compares must be placed in specific scenarios, and **knowing how to use** is the key. In the process of tuning operators such as GEMM/FA on the a chip, since a has a complete software stack from operator library to compiler, as well as a hardware RTL simulation environment, extreme tuning can be performed on every detail.
+
+For example, when tuning the FA operator, first do a good job of blocking strategy and data reuse at the algorithm level, then evaluate whether the compiler has room for tuning by analyzing the instruction stream, and finally obtain the actual performance through actual measurement and hardware simulation. The simulation waveform can help analyze the efficiency of hardware Matrix, Vector, and LSU units. This result can be fed back to the operator or compiler to continue tuning to improve the efficiency of various hardware functional units and squeeze hardware performance to the extreme. In the process of tuning operators on A800, due to the lack of hardware RTL simulation environment, simulation waveforms cannot be used to guide operators and compilers, so it is impossible to be as clear about every detail as on the a chip. The process of extreme kernel tuning on the a chip is shown in the figure below. MFU uses case QKV BF16, batch=8, head_num=8, seqlen=1024, head_dim=128, causal=false measured.
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img src={image7} alt="image7" />
+</div>
+
+| **FA Optimization Plan**                                                                                   | **MFU(%)** | **FA Current Plan Bottleneck Analysis**                                                                                                              |
+| ---------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Naive Implementation                                                                                       | 13.26      | q_seqlen dimension is not parallelized, and block size 128 is too small                                                                              |
+| Optimization V1 (Set block size to 256, parallelize q_seqlen)                                              | 26.53      | Gemm QK uses single buffer, failing to hide memory access latency (hardware simulation feedback).                                                    |
+| Optimization V2 (Gemm QK uses double buffer, issue Load V early)                                           | 40.81      | Too many a instructions, and max and sum need shared memory swizzle.                                                                                 |
+| Optimization V3 (Swap QK matrix positions)                                                                 | 51.02      | Softmax calculation max and sum instructions are too many, high latency (hardware simulation feedback, needs compiler synchronization optimization). |
+| Optimization V4 (Softmax instruction adjustment, reuse intermediate results and adjust instruction layout) | 56.12      | Too many SFU instructions (hardware simulation feedback)                                                                                             |
+
+The following specifically analyzes FlashAttention (FA), the most critical operator in large models.
+
+1. First, the softmax operation of the FA operator will generate a large number of FP32 instructions, and the vector and matrix computing power ratio of the a chip is twice that of the A800. Therefore, a's sufficient vector computing power ensures that the FA operator will not be limited by vector computing power on this chip, which is conducive to improving the utilization of matrix units.
+2. Second, since the FA operator contains a large number of exp calculations, the computing power of SFU is crucial for FA performance. The ratio of SFU to FP32 computing power of the a chip and A800 is the same, both are 1:4, so the a chip has more powerful SFU computing power.
+
+The above is just the " **knowing how to use** " reflected in the operator tuning process. In addition, when performing system tuning, " **knowing how to use** " is even more critical. The a chip uses PCIE Switch, and the interconnection bandwidth is inferior to A800 SXM. When tuning large model multi-card inference, due to complex communication and calculation, how to overlap communication and calculation to improve calculation throughput while hiding communication latency becomes particularly critical. a has achieved deep fusion of communication and computation, and inter-card communication is completely covered by computation. This content will be explained in detail later.
+
+### 3.3 Instruction Throughput
+
+The vector core computing unit of the a chip consists of BFU (Basic Function Unit) and SFU (Special Function Unit). BFU supports INT32/FP32 calculations, and SFU is a special function calculation unit used for calculation instructions such as sin/cos/log/exp/sqrt/rsq/ecp. At the same time, since the a chip adopts an asynchronous programming model compatible with CUDA, only mastering basic cuda programming technology is needed to unleash more than 95% of the theoretical peak computing power of the vector core computing unit.
+
+In byte_micro_perf in ByteMLPerf, we provide test programs and kernel programs. The test data and pseudo-code are shown below. By running the test program, it can be calculated that under the FP32 data format, the actual computing power of BFU and SFU is close to 100% computing power utilization. Due to the high utilization of vector units and the parallel execution of vector and tensor core units, in large model training and inference, the a chip can well hide SFU calculations in Tensor core calculations, improving calculation efficiency.
+
+| **Instruction Type (Data Type)** | **Utilization** |
+| -------------------------------- | --------------- |
+| EXP(float)                       | 97.4%           |
+| sin(float)                       | 97.4%           |
+| cos(float)                       | 97.4%           |
+| FMA(float)                       | 99.7%           |
+| MAX(float)                       | 99.7%           |
+| EXP(half)                        | 99.7%           |
+| dot2(half)                       | 99.4%           |
+
+Pseudo-code is as follows:
+
+```cpp
+//device kernel function
+__global__ void test_fma(const float* A，const float* B，float* C，int numElements，int iterCnt)
+{
+    unsigned ThreadId = computeCurrentThreadId();
+    check(ThreadId < numElements);
+    float a,b <- A[i],B[i];
+    for i from 0 to iterCnt-1 do:
+    {
+        Sum1 = fma(a，b，Sum1); //Avoid compiler optimization
+    }
+    C[i] = Sum1;
+}
+
+//host main
+int main(void)
+{
+    int  iterCnt = 1 << 16;
+    // Allocate the host input vector A B C
+    malloc(...);
+    // Initialize the host input vectors
+    Init(...);
+    // Allocate and the device input vector d_A d_B d_C
+    cudaMalloc(...);
+    // cudaMemcpyHostToDevice
+    cudaMemcpy(...);
+    // Launch the CUDA Kernel
+    int threadsPerBlock = 1024;//Define the number of threads per block
+    int blocksPerGrid   = ceil(numElements，threadsPerBlock);//Define the number of blocks per grid
+    test_fma<<<blocksPerGrid，threadsPerBlock>>>(d_A，d_B，d_C，numElements，iterCnt);//warm up
+    for (int i = 0; i < loop; i++)
+        test_fma<<<blocksPerGrid，threadsPerBlock>>>(d_A，d_B，d_C，numElements，iterCnt);
+    computeElapsedTime();
+    computePerf();
+    return 0;
+}
+
+```
+
+### 3.4 Memory Bandwidth
+
+To test the actual memory bandwidth utilization of the a chip, we used the typical memory bottleneck operator GEMV in the LLM decode process and considered the AWQ quantization method. Specifically, the weights of AWQ quantization are uint4, activation is fp16, and scale groupsize is 128. GEMV is an operator in the decode stage, that is, matrix multiplication vector. Since the sequence length is small, it is generally a memory bottleneck. Using AWQ GEMV to test MBU, the measured data is as follows:
+
+| **batch** | **n** | **k** | **MBU（%）** |
+| --------- | ----- | ----- | ------------ |
+| 4         | 8192  | 8192  | 87.8         |
+| 8         | 8192  | 8192  | 90.39        |
+| 16        | 8192  | 8192  | 91.52        |
+| 32        | 8192  | 8192  | 92.19        |
+
+Pseudo-code is as follows:
+
+```cpp
+// int4-bf16 gemv kernel function
+__global__ void gemv(void* weight，void* input，void* output) {
+    // double buffer shared memory
+    __shared__ char buffer[2][block_size];
+    // SME(shared memory engine)
+    // 2D async global -> shared memory
+    load_weight_async(0);
+    load_weight_async(1);
+    for (int i = 0; i < iter; ++i) {
+        // load input vector and scale value
+        load_input_scale();
+        // wait for async loaded weight
+        // allow 1 transfer on the way
+        wait_group(1);
+        // load next block of weight
+        load_weight_async((i + 1) % 2);
+        // CTA program counter sync
+        cta_barrier();
+        // do gemv compute
+        compute_gemv();
+    }
+    // write back to output
+    write_back_output();
+}
+
+```
+
+Thanks to the advanced asynchronous SME Engine design, flexible architecture, and high vector computing power, the a chip can achieve more than 90% bandwidth utilization in AWQ GEMV.
+
+### 3.5 GEMM Operator Measurement Analysis
+
+Based on several common matrix sizes in ByteMLPerf, the INT8 GEMM operator was evaluated, and the computing power utilization achieved by the a chip and A800 under these shapes was measured.
+
+|      |      |      | Computing Power Utilization (%) |       |
+| ---- | ---- | ---- | ------------------------------- | ----- |
+| M    | N    | K    | a                               | A800  |
+| 768  | 8192 | 1024 | 97.03                           | 50.41 |
+| 896  | 8192 | 1024 | 87.64                           | 50.26 |
+| 1152 | 8192 | 1024 | 93.74                           | 51.79 |
+| 1408 | 8192 | 1024 | 93.46                           | 57.76 |
+| 1152 | 1024 | 8192 | 65.9                            | 29.30 |
+| 1920 | 1024 | 8192 | 97.88                           | 48.1  |
+| 2688 | 1024 | 8192 | 96.46                           | 67.21 |
+
+From the results, it can be seen that under various typical scales, the a chip can maintain a high computing power utilization rate, especially in large-size matrix calculations, its computing array can be fully utilized, showing strong hardware efficiency stability.
+
+### 3.6 FA Operator Measurement Analysis
+
+#### 3.6.1 Pure BF16 Type MFU Comparison
+
+We will compare the pure BF16 type MFU of the FA operator for the a chip and NVIDIA A800. As shown in the table below, q_head_dim is equal to kv_head_dim, the horizontal axis represents the length of the input sequence, and the vertical axis represents MFU.
+
+A800 FA test uses the currently most commonly used Dao-AILab open source flash-attention implementation, version Release v2.7.4. a chip FA test uses ByteMLPerf framework.
+
+| **QKV BF16 FA Operator** |            |             |         |          | A800   | a      |
+| ------------------------ | ---------- | ----------- | ------- | -------- | ------ | ------ |
+| batch                    | q_head_num | kv_head_num | seq_len | head_dim | MFU(%) | MFU(%) |
+| 1                        | 64         | 8           | 512     | 128      | 18     | 28.1   |
+| 1                        | 64         | 8           | 1024    | 128      | 33     | 47.7   |
+| 1                        | 64         | 8           | 2048    | 128      | 45.3   | 61.6   |
+| 1                        | 64         | 8           | 4096    | 128      | 63.1   | 70.1   |
+| 1                        | 64         | 8           | 8192    | 128      | 68.6   | 75.7   |
+| 1                        | 64         | 8           | 16384   | 128      | 69     | 78.6   |
+
+<img src={image8} alt="image8"></img>
+
+As shown in the figure above, from the performance test results of QKV BF16, whether on short seqlen or long seqlen, the a chip shows higher MFU than A800, which demonstrates the extremely high FA efficiency of a a and fully reflects the high efficiency of a a architecture.
+
+#### 3.6.2 INT8 Type MFU Comparison
+
+The table below shows the FA test results of the a chip QKV Int8 type.
+
+| **QKV INT FA Operator** |            |             |         |          | **a**  |
+| ----------------------- | ---------- | ----------- | ------- | -------- | ------ |
+| batch                   | q_head_num | kv_head_num | seq_len | head_dim | MFU(%) |
+| 1                       | 64         | 8           | 512     | 128      | 20.8   |
+| 1                       | 64         | 8           | 1024    | 128      | 35.96  |
+| 1                       | 64         | 8           | 2048    | 128      | 47.44  |
+| 1                       | 64         | 8           | 4096    | 128      | 56.12  |
+| 1                       | 64         | 8           | 8192    | 128      | 61.68  |
+| 1                       | 64         | 8           | 16384   | 128      | 64.54  |
+
+#### 3.6.3 FA Pipeline Analysis Diagram
+
+To further study the efficiency of the FA operator, the **FA** **extreme optimization pipeline diagram** of the a chip is given below. As shown in the figure, it can be seen that the pipeline arrangement is very compact and resource idle time is very low, so its FA operator efficiency is relatively high.
+
+<img src={image9} alt="image9"></img>
+
+## 4. Collective Communication and Computation-Communication Fusion Analysis
+
+### 4.1 Single Machine Topology
+
+<img src={image10} alt="image10"></img>
+
+The figure above is the 16-card interconnection topology of the a chip. Every two cards are connected through a PCIe 4.0 Switch, every 4 cards are connected through a PCIe 4.0 Switch, and two PCIe Switches are connected to two CPUs. For All-Gather calls, the Ring algorithm is executed. After 15 ring transmissions, each GPU has a complete copy. For All-Reduce calls, the Reduce-Scatter + All-Gather algorithm is used, executing the Ring algorithm twice, and each pass of the algorithm also iterates 15 times.
+
+### 4.2 All-Reduce Communication
+
+We use the ByteMLPerf framework to test the communication latency and algorithm bandwidth between 2 cards under different communication volumes. The a chip uses PCIe 4.0 communication, with a theoretical upper limit of 32GB/s one-way and 64GB/s bidirectional.
+
+| **Cards** | **Data Type** | **Volume(MB)** | **latency(us)** | **bus_bw(GB/s)** |
+| --------- | ------------- | -------------- | --------------- | ---------------- |
+| 2         | float         | 8              | 1310.304        | 12.804           |
+| 2         | float         | 16             | 2163.918        | 15.506           |
+| 2         | float         | 32             | 3515.623        | 19.089           |
+
+All-Reduce uses the Ring algorithm. For dual-card Reduce, the algorithm includes three core steps:
+
+1. Data transmission: Send the data of the current Rank to the next Rank;
+2. Barrier: After the Rank completes sending data, a Barrier will be performed between Ranks to ensure data transmission is complete;
+3. Reduce: Reduce the received data and the local data on the Rank.
+
+Plus certain PCIe protocol overhead and communication startup overhead, at 16M length, all-reduce can achieve about 60% bandwidth utilization.
+
+### 4.3 All-Gather Communication
+
+| **Cards** | **Data Type** | **Volume(MB)** | **latency(us)** | **bus_bw(GB/s)** |
+| --------- | ------------- | -------------- | --------------- | ---------------- |
+| 2         | float         | 8              | 587             | 14.291           |
+| 2         | float         | 16             | 1048.4          | 16.003           |
+| 2         | float         | 32             | 1770.8          | 18.949           |
+
+The algorithm of All-Gather is similar to All-Reduce, the difference is that Reduce is not required. At 16M length, all-gather can also achieve about 60% bandwidth utilization.
+
+### 4.4 Computation-Communication Fusion
+
+a has optimized computation-communication fusion for the common GEMM + All Reduce process in Large Language Models (LLM). Thanks to the highly flexible CUDA-compatible architecture, users can easily perform fine-grained control of calculation/communication, thereby improving chip utilization.
+
+<div style={{ display: 'flex', gap: '32px', justifyContent: 'center' }}>
+  <div style={{ textAlign: 'center' }}>
+    <img
+      src={image11}
+      alt="image11"
+    />
+  </div>
+
+  <div style={{ textAlign: 'center' }}>
+    <img
+      src={image12}
+      alt="image12"
+    />
+  </div>
+</div>
+
+As shown in the figure above, after optimization, the calculation and communication stages are split into multiple parts, so there is no need to wait for all calculations to complete before starting communication. Through reasonable scheduling, communication time is almost completely hidden in the GEMM and Reduce calculation process, which allows the a chip to fully utilize limited interconnection bandwidth to achieve extremely high Prefill efficiency.
+
+## 5. Model Measurement Analysis
+
+### 5.1 Theoretical Analysis (TP v.s. PP)
+
+Due to the high computing power density of the a chip, it is more suitable for compute-intensive **prefill** scenarios, while it is relatively less advantageous for memory-intensive **decode** scenarios.
+
+The chip uses PCIe-Switch for inter-card interconnection, lacking a specialized high-speed interconnection bus. The interconnection capability is 64GB/s bidirectional bandwidth, significantly lower than A800's 400GB/s bandwidth. Therefore, when multi-card parallelism is used, **parallel strategies with lower bandwidth requirements** need to be selected to avoid performance bottlenecks. Although the interconnection bandwidth is lower, as mentioned in Section 3.2, optimizations in software architecture can narrow the gap caused by hardware, and reasonable software design and scheduling strategies are the key to performance realization.
+
+Taking the Deepseek R1 model as an example, when weights are stored using int4, it can be deployed on 16 a chips. Assuming the sequence length is 4096, the model dimension is 7168, the number of activation parameters per card is 2.3 B, and the model has 61 layers. When the attn part uses TP and the ffn part uses TP/EP, each layer requires 2 all-reduce communication operations. When the communication data type is BF16, at TP16, the communication volume per card is:
+
+```
+seq_len * hidden_size * (TP -1)/TP * 2 * size_bfloat16 * 2 * layer
+= 4096 * 7168 * 15/16 * 2 * 2 * 2 * 61
+= 12.5GByte
+```
+
+And the corresponding calculation amount is:
+
+```
+seq_len * nparam * 2
+= 4096 * 2.3 * 10^9 * 2
+= 18.8T
+```
+
+Although some operators are memory-bound during actual execution (execution time will be longer than pure calculation), and computation-communication fusion optimization can be combined to increase this ratio, communication still takes up a large amount of time. Therefore, TP is used less and PP is used more in a chips.
+
+Considering using only PP parallelism, when PP=16, the communication volume per card is:
+
+```
+seq_len * dmodel * size_bfloat16
+= 4096 * 7168 * 2
+= 56MByte
+```
+
+It can be seen that the communication overhead of PP is far less than that of TP.
+
+Compared with the TP parallel strategy, PP and CPP parallel strategies only have point-to-point communication. From the above calculation, its communication theoretical time consumption is less than 1% of the calculation time. Therefore, the a chip is currently suitable for PP and CPP scenarios with low bandwidth requirements. The figure below shows the P2P performance of the chip under some common sizes.
+
+| **Data Type** | **Seq Len(seq_len)** | **Model Dim(dmodel)** | **Latency(us)** | **Bandwidth(GB/s)** |
+| ------------- | -------------------- | --------------------- | --------------- | ------------------- |
+| bfloat16      | 4096                 | 8192                  | 3056.36         | 21.957              |
+| bfloat16      | 8192                 | 8192                  | 5722.575        | 23.454              |
+| bfloat16      | 16384                | 8192                  | 10994.94        | 24.414              |
+
+Under several sequence lengths, P2P performance can reach 65%~75% of the peak value, meeting the requirements of PP parallelism. Therefore, when the a chip mainly uses PP parallelism, its communication time can be ignored.
+
+Currently, the a chip adopts the PCIe 4.0 interconnection scheme. If larger TP parallelism is to be supported, the calculation/communication time ratio needs to be further increased. Therefore, in subsequent chip designs, it is planned to upgrade the interconnection scheme to PCIe 5.0 to double the bandwidth. In this way, with computing power unchanged, the TP theoretical calculation/communication time ratio will double synchronously. At the same time, since even with PCIe 5.0, the pure TP theoretical calculation/communication time can only increase from 0.5 to 1, and the calculation proportion is still small, so PP is still needed. Therefore, the next generation chip design will better support P2P communication semantics to better support PP and CPP parallel modes.
+
+Below, the vLLM framework is used to test the prefill performance of the a chip and A800 on two classic models.
+
+### 5.2 LLaMA2 7B Prefill Measurement Results
+
+The following tests the actual results of TTFT and throughput of NVIDIA A800 and a chips in the LLaMA2 7B Prefill w8a8-int8 scenario as the number of input tokens increases.
+
+|            |             | **NVIDIA A800** |                         | **a**        |                         |
+| ---------- | ----------- | --------------- | ----------------------- | ------------ | ----------------------- |
+| **Params** | **Token #** | **TTFT(ms)**    | **Throughput(token/s)** | **TTFT(ms)** | **Throughput(token/s)** |
+| 7b         | 1024        | 63.55           | 16113                   | 122.15       | 16766                   |
+| 7b         | 2048        | 114.65          | 17863                   | 212.21       | 19301                   |
+| 7b         | 4096        | 208.40          | 19654                   | 404.12       | 20271                   |
+
+As shown in the table above, the Time To First Token (TTFT) of the a chip is about twice that of the NVIDIA A800 chip; as the number of Tokens increases, the throughput performance advantage of this chip over A800 gradually becomes prominent, and the final measured throughput performance is slightly better than that of the NVIDIA A800 chip.
+
+### 5.3 DeepSeek R1 Prefill Measurement Results
+
+The following tests the actual results of TTFT and throughput of NVIDIA A800 in the DeepSeek R1 671B Prefill scenario as the number of input tokens increases (Note: vLLM does not support MoE W8A8-int8 on NVIDIA A800 chips, so A800 uses w4a16 quantization scheme). To maximize throughput and unify test standards, both A800 and a chips use the TP2 PP8 parallel scheme.
+
+| **TP** | **PP** | **Params** | **Token #** | **TTFT(ms)** | **Throughput(token/s)** |
+| ------ | ------ | ---------- | ----------- | ------------ | ----------------------- |
+| 2      | 8      | 671B       | 1024        | 735.67       | 11135                   |
+| 2      | 8      | 671B       | 2048        | 1343.85      | 12192                   |
+| 2      | 8      | 671B       | 4096        | 2749.54      | 11918                   |
+
+The following are the actual results of TTFT and throughput of the a chip in the DeepSeek R1 671B Prefill scenario as the number of input tokens increases. Since the interconnection bandwidth of this chip is low, using a larger PP can alleviate the size of communication, fully utilize the chip's hardware resources, reduce latency, and improve throughput.
+
+| **TP** | **PP** | **Params** | **Token #** | **TTFT(ms)** | **Throughput(token/s)** |
+| ------ | ------ | ---------- | ----------- | ------------ | ----------------------- |
+| 2      | 8      | 671B       | 1024        | 397.93       | 20586                   |
+| 2      | 8      | 671B       | 2048        | 770.20       | 21272                   |
+| 2      | 8      | 671B       | 4096        | 1627.90      | 20129                   |
+
+Comparing the two sets of measured results, it can be found that thanks to the customized adaptation and optimization of the a chip for the DeepSeek R1 model, its TTFT is significantly lower than that of NVIDIA A800, and the overall throughput performance is also better than A800. It should be pointed out that the a chip has performed W4A8 quantization optimization for the DeepSeek model, corresponding to INT8 computing precision; while A800 uses the W4A16 quantization scheme, corresponding to BF16 precision. The higher throughput performance of the a chip mainly comes from the improvement of its hardware computing power utilization and deep software stack optimization. This shows that in the prefill scenario, the a chip can achieve performance close to or even better than A800.
+
+## 6. Open Source Reproduction
+
+### 6.1 ByteMLPerf Test
+
+Code version:
+
+| Test Case       | Test Config                                                  | Test Script |
+| --------------- | ------------------------------------------------------------ | ----------- |
+| gemm            | --hardware_type ILUVATAR --device all --task gemm            | launch.py   |
+| flash attention | --hardware_type ILUVATAR --device all --task flash_attention | launch.py   |
+| all_reduce      | --hardware_type ILUVATAR --device all --task all_reduce      | launch.py   |
+
+Code Link: [https://github.com/sxbjzd/ByteMLPerf/blob/main/byte_micro_perf/backends/ILUVATAR/README.zh_CN.md](https://github.com/sxbjzd/ByteMLPerf/blob/main/byte_micro_perf/backends/ILUVATAR/README.zh_CN.md)
+
+### 6.2 vLLM Test Script
+
+Code version: vllm0.7.3
+
+| Test Case      | Test Config                                                                         | Test Script          |
+| -------------- | ----------------------------------------------------------------------------------- | -------------------- |
+| Deepseek w4a8  | --model DeepSeek-R1-int4-pack8 --pipeline-parallel-size 8  --tensor-parallel-size 2 | benchmark_serving.py |
+| llama2-7b w8a8 | --model Llama-2-7b-chat-quantized.w8a8 --tensor-parallel-size 2                     | benchmark_serving.py |
+
+Code Link same as above.
+
+## 7. Discussion and Future Outlook
+
+### 7.1 Computing Power v.s. On-Chip Memory
+
+<div style={{ display: 'flex', gap: '32px', justifyContent: 'center' }}>
+  <div style={{ textAlign: 'center' }}>
+    <img src={image13} alt="image13" />
+    <div
+      style={{
+        marginTop: '8px',
+        fontSize: '14px',
+        color: '#666',
+        fontStyle: 'italic',
+      }}
+    >
+      Classic GPU Memory Hierarchy
+    </div>
+  </div>
+</div>
+
+How to achieve L2-L1 high bandwidth under limited wiring resources to meet the needs of rapidly expanding computing power is a core challenge in modern a design. An architectural highlight of the a chip is that four SMs share one L1, which greatly reduces the bandwidth pressure of L2-L1, thereby reducing wiring pressure. NVIDIA continuously uses DSM technology in H and B series GPUs to reduce L2 bandwidth pressure.
+
+By extension, this problem can be further expanded into how to design the grouping form, size ratio, data path, and other architectures of Computing Core-L1 cache-L2 Cache to achieve a good balance among many factors such as area, latency, bandwidth, computing power, and computing power utilization as much as possible, which is a huge challenge.
+
+Continuing to extend, the ratio of on-chip storage to computing power and the hierarchical form are also an art of balance. How to use as little buffer as possible to exchange for as high computing power utilization as possible is one of the core challenges of all AI accelerator chip architectures. Taking TPU-v1 as an example, 29% of the chip area is used for on-chip storage, and only 24% of the area is used for MAC computing arrays. This is obviously contrary to the idea of selling computing power.
+
+As a bridge between chip architecture and practical application, ByteMLPerf helps chip practitioners explore performance bottlenecks of current architectures from the perspective of practical applications by designing a complete set of performance test cases, providing corresponding solutions for the next generation to improve chip architecture and explore better and higher performance architecture schemes. From the perspective of practical application, ByteMLPerf provides a variety of instruction, operator, and model tests, so that chip performance in business is no longer a black box, reconnecting chip specifications (spec) with actual application performance, making the ceiling of optimization within reach.
+
+### 7.2 Interconnection
+
+The next-generation chip interconnection solution of a consists of multiple groups of chips containing multiple chips. Within the group, they are connected by a central Switch, and a NIC interface is provided at the same time. Intra-group chips can be directly connected to the external Switch of the middle layer. Each intermediate IX Switch adopts a multi-layer stacked structure. Intra-group chips are connected to other chips in one hop through the intra-group Switch, and then connected to the corresponding multiple external Switches.
+
+The total number of GPU chips in multiple groups of chips is equal to the number of chip groups multiplied by the number of chips in each group. Similarly, the intermediate IX Switch also includes multiple Switches, so the total number of Switches is equal to the number of IX Switch groups multiplied by the number of single group Switches, achieving Switch full connection.
+
+### 7.3 Future Outlook
+
+Extreme optimization requires a larger perspective to look at applications, software, system architecture, and chips. From the perspective of the figure below, in the past 20 years, Moore's Law led by device optimization has led to the prosperity of semiconductors. Design-technology-cooptimization (DTCO) has further optimized layout and routing and achieved smaller standard cell sizes. Chiplet technology has further brought packaging technology to the chip design process to cope with higher memory bandwidth requirements. Each optimization path is closer to the upper-layer application and requires multi-level collaborative optimization. Extreme end-to-end optimization of System co-optimization (STCO) requires consideration of software and upper-layer applications. The proposal of **ByteMLPerf** will become a heavy tool for STCO. Through cooperation and exploration with chip manufacturers, extreme chip performance will be achieved, providing sufficient data support and optimization suggestions for next-generation chip architecture design.
+
+<div style={{ display: 'flex', gap: '32px', justifyContent: 'center' }}>
+  <div style={{ textAlign: 'center' }}>
+    <img src={image14} alt="image14" />
+    <div
+      style={{
+        marginTop: '8px',
+        fontSize: '14px',
+        color: '#666',
+        fontStyle: 'italic',
+      }}
+    >
+      System Co-optimization Perspective [Image source, Moore's Law at Intel's
+      75th Anniversary,
+      https://download.intel.com/newsroom/2022/new-technologies/ann-kelleher-iedm-2022.pdf]
+    </div>
+  </div>
+</div>
+
+## 8. Conclusion
+
+ByteMLPerf is an open-source instruction, operator, and model evaluation tool used to explore the ceiling of chips and achieve the goal of buying good chips and using them well. This blog explores the a CoreX a chip as an example. This chip is a very distinctive chip, achieving computing power and memory comparable to A800. In measured scenarios, GEMM operators and FA operators can achieve high efficiency, fully releasing hardware capabilities. In large model applications, this chip uses ingenious parallel strategies to play to its strengths and avoid weaknesses, achieving very good performance.
+
+At the same time, through analysis and discussion, we can also see that a's architecture has great room for iteration and potential. With the guidance and help of the ByteMLPerf evaluation tool, if the existing architectural advantages can be utilized, strengths can be exerted, and weaknesses can be made up, more efficient large model inference performance can be implemented. At the same time, the high versatility and flexibility brought by a's SIMT architecture also make sufficient preparations for future changes in large model structures, reducing developers' learning efficiency and usage difficulty.
+
+In short, the ByteMLPerf evaluation tool is to cooperate with chip companies, grow together, and will also contribute its own strength to the establishment of AI infrastructure together with chip companies in the future.

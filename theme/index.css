@@ -38,3 +38,24 @@ button:focus-visible {
   max-width: 100vw;
   padding: 0 10px;
 }
+
+[class*=" singleItem_"] {
+  background-color: transparent;
+  color: #6E718C;
+  cursor: pointer;
+}
+
+[class*=" activeItem_"] {
+  background-color: transparent;
+  cursor: pointer;
+  color: #3F3F51;
+}
+
+[class*=" singleItem_"]:hover {
+  background-color: transparent;
+  color: #3F3F51;
+  cursor: pointer;
+}
+
+
+

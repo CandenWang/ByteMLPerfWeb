@@ -66,25 +66,27 @@ function useFooterData() {
 export function HomeFooter() {
   const footerData = useFooterData();
   return (
-    <div className="flex flex-col border-t dark:border-dark-50 items-center mt-[80px]">
-      <div className="pt-8 pb-4 w-full justify-around max-w-6xl hidden sm:flex">
-        {footerData.map((item, index) => (
-          <div key={index} className="flex flex-col items-start">
-            <h2 className="font-bold my-4 text-lg">{item.title}</h2>
-            <ul className="flex flex-col gap-3">
-              {item.items.map((subItem) => (
-                <li key={subItem.title}>
-                  <Link href={subItem.link}>
-                    <span className="font-normal">{subItem.title}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+    <div>
+      <div className="flex flex-col items-center mt-[120px] py-12 border-y border-[#DDE2E9] px-4 xl:px-10 min-[1680px]:px-[120px]">
+        <div className="w-full justify-between hidden sm:flex">
+          {footerData.map((item, index) => (
+            <div key={index} className="flex flex-col items-start">
+              <h2 className="font-bold mb-6 text-lg">{item.title}</h2>
+              <ul className="flex flex-col gap-5">
+                {item.items.map((subItem) => (
+                  <li key={subItem.title}>
+                    <Link href={subItem.link}>
+                      <span className="font-normal">{subItem.title}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="flex flex-center">
-        <h2 className="font-normal text-sm text-gray-600 dark:text-light-600 py-4">
+        <h2 className="font-normal text-sm text-gray-600 dark:text-light-600 py-4 mb-[10px]">
           © 2024 Bytedance Inc. All Rights Reserved.
         </h2>
       </div>

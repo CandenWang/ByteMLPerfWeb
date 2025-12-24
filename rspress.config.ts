@@ -29,34 +29,20 @@ function getNavConfig(lang: 'zh' | 'en'): NavItem[] {
   const { getText, getLink } = getI18nHelper(lang);
   return [
     {
-      text: getText('指南', 'Guide'),
-      link: getLink('/guide/introduction'),
-      activeMatch: '/guide/',
+      text: '首页',
+      link: getLink('/'),
+      activeMatch: '/index',
     },
     {
       text: getText('博客', 'Blog'),
       link: getLink('/blog/kubecon'),
       activeMatch: '/blog',
     },
-    {
-      text: getText('关于', 'About'),
-      items: [
-        {
-          text: getText('加入我们', 'Join Us'),
-          link: getLink('/misc/join-us'),
-        },
-        {
-          text: getText('贡献指南', 'Contributing Guide'),
-          link: 'https://github.com/bytedance/ByteMLPerf/blob/main/CONTRIBUTING.md',
-        },
-      ],
-    },
   ];
 }
 
 function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
   const { getText, getLink } = getI18nHelper(lang);
-
   return {
     [getLink('/guide/')]: [
       {
@@ -128,25 +114,37 @@ function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
     ],
     [getLink('/blog/')]: [
       {
-        text: getText(
-          'AI ASIC 的基准测试、优化和生态系统协作的整合',
-          'Integration of Benchmark Testing, Optimization, and Ecosystem Collaboration for AI ASICs'
-        ),
-        link: getLink('/blog/kubecon'),
-      },
-      {
-        text: getText(
-          'ByteMLPerf将参加Open Source Summit',
-          'ByteMLPerf will be participating in the upcoming Open Source Summit in Shanghai'
-        ),
-        link: getLink('/blog/summit'),
-      },
-      {
-        text: getText(
-          'GRAPHCORE现已支持BYTEMLPERF',
-          'Graphcore now supports ByteMLPerf'
-        ),
-        link: getLink('/blog/graphcore'),
+        text: '研究成果',
+        items: [
+          {
+            text: getText(
+              'AI ASIC 的基准测试、优化和生态系统协作的整合',
+              'Integration of Benchmark Testing, Optimization, and Ecosystem Collaboration for AI ASICs'
+            ),
+            link: getLink('/blog/kubecon'),
+          },
+          {
+            text: getText(
+              'ByteMLPerf将参加Open Source Summit',
+              'ByteMLPerf will be participating in the upcoming Open Source Summit in Shanghai'
+            ),
+            link: getLink('/blog/summit'),
+          },
+          {
+            text: getText(
+              'GRAPHCORE现已支持BYTEMLPERF',
+              'Graphcore now supports ByteMLPerf'
+            ),
+            link: getLink('/blog/graphcore'),
+          },
+          {
+            text: getText(
+              '构建开源 AI 硬件评测工具， ByteMLperf-v1.0 X 天数智芯，扬长避短是关键',
+              'Building an Open Source AI Hardware Benchmark Tool, ByteMLperf-v1.0 X Days Accelerator, Leveraging the Advantages of Days Accelerator while Avoiding its Shortcomings'
+            ),
+            link: getLink('/blog/ts'),
+          },
+        ],
       },
     ],
   };
@@ -178,6 +176,9 @@ const toFeedItem: PluginRssOption['toFeedItem'] = (page) => {
 };
 
 export default defineConfig({
+  route: {
+    cleanUrls: true,
+  },
   root: path.join(__dirname, 'docs'),
   title: 'ByteMLPerf',
   description: 'AI Accelerator Benchmark focuses on evaluating AI Accelerators',
@@ -204,27 +205,13 @@ export default defineConfig({
     }),
   ],
   themeConfig: {
+    enableScrollToTop: true,
+    darkMode: false,
+    search: false,
+    enableContentAnimation: true,
     footer: {
       message: '© 2024 Bytedance Inc. All Rights Reserved.',
     },
-    socialLinks: [
-      {
-        icon: 'github',
-        mode: 'link',
-        content: 'https://github.com/bytedance/ByteMLPerf',
-      },
-      {
-        icon: 'twitter',
-        mode: 'link',
-        content: 'https://twitter.com/bytemlperf',
-      },
-      {
-        icon: 'lark',
-        mode: 'link',
-        content:
-          'https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=edcvd6ab-cb20-4210-a828-5e40be0c768l',
-      },
-    ],
     locales: [
       {
         lang: 'en',
@@ -253,11 +240,8 @@ export default defineConfig({
         '@hooks': path.join(__dirname, 'hooks'),
       },
     },
-    dev: {
-      startUrl: false,
-    },
     tools: {
-      postcss: (config, { addPlugins }) => {
+      postcss: (_, { addPlugins }) => {
         addPlugins([require('tailwindcss/nesting'), require('tailwindcss')]);
       },
     },
