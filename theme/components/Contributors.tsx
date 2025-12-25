@@ -1,5 +1,8 @@
 import { motion } from 'framer-motion';
 import { FC } from 'react';
+import { Tooltip } from 'react-tooltip';
+import 'react-tooltip/dist/react-tooltip.css';
+import contributorsData from './contributors.json';
 
 const vendors = [
   { src: '/usedby/graphcore.png', href: 'https://www.graphcore.ai/' },
@@ -7,6 +10,46 @@ const vendors = [
   { src: '/usedby/moffett.png', href: 'https://moffett.ai/' },
   { src: '/usedby/stream.png', href: 'https://www.streamcomputing.com/' },
 ];
+
+interface Contributor {
+  login: string;
+  avatar_url: string;
+  html_url: string;
+  contributions: number;
+}
+
+const ContributorList = () => {
+  const contributors = contributorsData as Contributor[];
+
+  return (
+    <>
+      <div className="flex flex-wrap gap-3">
+        {contributors.map((contributor) => (
+          <a
+            key={contributor.login}
+            href={contributor.html_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-tooltip-id="contributor-tooltip"
+            data-tooltip-content={contributor.login}
+            className="transition-all hover:scale-110 relative hover:z-10"
+          >
+            <img
+              src={contributor.avatar_url}
+              alt={contributor.login}
+              className="w-12 h-12 rounded-full border border-gray-200"
+            />
+          </a>
+        ))}
+      </div>
+      <Tooltip
+        id="contributor-tooltip"
+        place="top"
+        style={{ zIndex: 50, fontSize: '12px', padding: '4px 8px' }}
+      />
+    </>
+  );
+};
 
 export const Contributors: FC = () => (
   <>
@@ -37,7 +80,7 @@ export const Contributors: FC = () => (
         </div>
       </motion.div>
     </div>
-    <div className="flex flex-col mb-[120px] items-start overflow-x-auto">
+    <div className="flex flex-col mb-[120px] items-start">
       <h2 className="text-3xl font-bold mb-10">Contributors</h2>
       <motion.div
         initial={{ opacity: 0 }}
@@ -45,9 +88,7 @@ export const Contributors: FC = () => (
         viewport={{ once: true, margin: '-50px' }}
         transition={{ duration: 0.5, delay: 0.2 }}
       >
-        <a href="https://github.com/bytedance/ByteMLPerf/graphs/contributors">
-          <img src="https://contrib.rocks/image?repo=bytedance/ByteMLPerf" />
-        </a>
+        <ContributorList />
       </motion.div>
     </div>
   </>
