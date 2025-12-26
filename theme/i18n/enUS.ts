@@ -20,4 +20,7 @@ export const EN_US = {
   datasetTitle: 'Vendor Chip Infomation',
   datasetDesc: 'Provide accurate chip data for user reference and comparison.',
   recruit: 'Heterogeneous Hardware team is recruiting, welcome to join👏🏻',
+  viewLatestArticle: 'View latest article',
+  supportingVendors: 'Supporting Vendors',
+  contributors: 'Contributors',
 } as const;

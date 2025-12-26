@@ -22,4 +22,7 @@ export const ZH_CN: Record<keyof typeof EN_US, string> = {
   datasetTitle: '准确的芯片数据',
   datasetDesc: '提供准确的芯片数据，供用户参考比较。',
   recruit: '异构硬件团队正在招聘中，欢迎加入👏🏻',
+  viewLatestArticle: '展示该成果最新文章',
+  supportingVendors: '合作厂商',
+  contributors: '贡献者',
 };

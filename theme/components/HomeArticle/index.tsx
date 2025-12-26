@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { Tooltip as ReactTooltip } from 'react-tooltip';
 import 'react-tooltip/dist/react-tooltip.css';
+import { useI18n } from '../../i18n';
 
 const DescriptionWithTooltip = ({ text }: { text: string }) => {
   const [isOverflowing, setIsOverflowing] = useState(false);
@@ -64,6 +65,7 @@ function ArticleCarousel({ section }: { section: ArticleSection }) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const { title, desc, items } = section;
   const features = items || [];
+  const t = useI18n();
 
   const scroll = (direction: 'left' | 'right') => {
     if (scrollContainerRef.current) {
@@ -161,7 +163,7 @@ function ArticleCarousel({ section }: { section: ArticleSection }) {
               </h3>
               <DescriptionWithTooltip text={feature.desc} />
               <div className="flex items-center text-sm font-normal leading-[22px] tracking-[0.042px] transition-all text-[#0B0B0F] group-hover:text-[#5252FF] group-hover:underline group-hover:decoration-[#5252FF] [text-underline-position:from-font] gap-1 group-hover:gap-1.5">
-                <span>展示该成果最新文章</span>
+                <span>{t('viewLatestArticle')}</span>
                 <svg
                   width="14"
                   height="8"

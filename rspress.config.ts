@@ -29,7 +29,7 @@ function getNavConfig(lang: 'zh' | 'en'): NavItem[] {
   const { getText, getLink } = getI18nHelper(lang);
   return [
     {
-      text: '首页',
+      text: getText('首页', 'Home'),
       link: getLink('/'),
       activeMatch: '/index',
     },
@@ -69,7 +69,7 @@ function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
           },
           {
             link: getLink('/guide/inference_general_vendor'),
-            text: getText('厂商接入指南', 'Vendor Intergration Guide'),
+            text: getText('厂商接入指南', 'Vendor Integration Guide'),
           },
         ],
       },
@@ -83,7 +83,7 @@ function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
           },
           {
             link: getLink('/guide/inference_llm_vendor'),
-            text: getText('厂商接入指南', 'Vendor Intergration Guide'),
+            text: getText('厂商接入指南', 'Vendor Integration Guide'),
           },
         ],
       },
@@ -97,7 +97,7 @@ function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
           },
           {
             link: getLink('/guide/micro_vendor'),
-            text: getText('厂商接入指南', 'Vendor Intergration Guide'),
+            text: getText('厂商接入指南', 'Vendor Integration Guide'),
           },
         ],
       },
@@ -114,7 +114,7 @@ function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
     ],
     [getLink('/blog/')]: [
       {
-        text: '研究成果',
+        text: getText('研究成果', 'Research Achievements'),
         items: [
           {
             text: getText(
