@@ -4,6 +4,12 @@ import { NavItem, Sidebar } from '@rspress/shared';
 import { pluginShiki } from '@rspress/plugin-shiki';
 import { pluginRss, PluginRssOption } from './rspress/plugin-rss';
 import { toArray } from './rspress/plugin-rss/utils';
+import {
+  siteConfig,
+  I18nText,
+  NavItemConfig,
+  SidebarItemConfig,
+} from './site.config';
 
 const PUBLISH_URL = 'https://bytemlperf.ai';
 const COPYRIGHT = '© 2024 Bytedance Inc. All Rights Reserved.';
@@ -21,133 +27,43 @@ function getI18nHelper(lang: 'zh' | 'en') {
   const isZh = lang === 'zh';
   const prefix = isZh ? '/zh' : '';
   const getLink = (str: string) => `${prefix}${str}`;
-  const getText = (zhText: string, enText: string) => (isZh ? zhText : enText);
+  const getText = (text: I18nText | string) => {
+    if (typeof text === 'string') {
+      return text;
+    }
+    return isZh ? text.zh : text.en;
+  };
   return { getText, getLink };
 }
 
 function getNavConfig(lang: 'zh' | 'en'): NavItem[] {
   const { getText, getLink } = getI18nHelper(lang);
-  return [
-    {
-      text: getText('首页', 'Home'),
-      link: getLink('/'),
-      activeMatch: '/index',
-    },
-    {
-      text: getText('博客', 'Blog'),
-      link: getLink('/blog/kubecon'),
-      activeMatch: '/blog',
-    },
-  ];
+  return siteConfig.nav.map((item) => ({
+    text: getText(item.text),
+    link: getLink(item.link),
+    activeMatch: item.activeMatch,
+  }));
 }
 
 function getSidebarConfig(lang: 'zh' | 'en'): Sidebar {
   const { getText, getLink } = getI18nHelper(lang);
-  return {
-    [getLink('/guide/')]: [
-      {
-        collapsible: false,
-        text: getText('开始', 'Getting started'),
-        items: [
-          {
-            link: getLink('/guide/introduction'),
-            text: getText('介绍', 'Introduction'),
-          },
-          {
-            link: getLink('/guide/quick-start'),
-            text: getText('快速开始', 'Quick Start'),
-          },
-        ],
-      },
-      {
-        collapsible: false,
-        text: getText('Inference General Perf', 'Inference General Perf'),
-        items: [
-          {
-            link: getLink('/guide/inference_general_overview'),
-            text: getText('概览', 'Overview'),
-          },
-          {
-            link: getLink('/guide/inference_general_vendor'),
-            text: getText('厂商接入指南', 'Vendor Integration Guide'),
-          },
-        ],
-      },
-      {
-        collapsible: false,
-        text: getText('Inference LLM Perf', 'Inference LLM Perf'),
-        items: [
-          {
-            link: getLink('/guide/inference_llm_overview'),
-            text: getText('概览', 'Overview'),
-          },
-          {
-            link: getLink('/guide/inference_llm_vendor'),
-            text: getText('厂商接入指南', 'Vendor Integration Guide'),
-          },
-        ],
-      },
-      {
-        collapsible: false,
-        text: getText('Micro Perf', 'Micro Perf'),
-        items: [
-          {
-            link: getLink('/guide/micro_overview'),
-            text: getText('概览', 'Overview'),
-          },
-          {
-            link: getLink('/guide/micro_vendor'),
-            text: getText('厂商接入指南', 'Vendor Integration Guide'),
-          },
-        ],
-      },
-      {
-        collapsible: false,
-        text: getText('Training Perf', 'Training Perf'),
-        items: [
-          {
-            link: getLink('/guide/training_overview'),
-            text: getText('概览', 'Overview'),
-          },
-        ],
-      },
-    ],
-    [getLink('/blog/')]: [
-      {
-        text: getText('研究成果', 'Research Achievements'),
-        items: [
-          {
-            text: getText(
-              'AI ASIC 的基准测试、优化和生态系统协作的整合',
-              'Integration of Benchmark Testing, Optimization, and Ecosystem Collaboration for AI ASICs'
-            ),
-            link: getLink('/blog/kubecon'),
-          },
-          {
-            text: getText(
-              'ByteMLPerf将参加Open Source Summit',
-              'ByteMLPerf will be participating in the upcoming Open Source Summit in Shanghai'
-            ),
-            link: getLink('/blog/summit'),
-          },
-          {
-            text: getText(
-              'GRAPHCORE现已支持BYTEMLPERF',
-              'Graphcore now supports ByteMLPerf'
-            ),
-            link: getLink('/blog/graphcore'),
-          },
-          {
-            text: getText(
-              '构建开源 AI 硬件评测工具， ByteMLperf-v1.0 X 天数智芯，扬长避短是关键',
-              'Building an Open Source AI Hardware Benchmark Tool, ByteMLperf-v1.0 X Days Accelerator, Leveraging the Advantages of Days Accelerator while Avoiding its Shortcomings'
-            ),
-            link: getLink('/blog/ts'),
-          },
-        ],
-      },
-    ],
-  };
+  const sidebar: Sidebar = {};
+
+  Object.keys(siteConfig.sidebar).forEach((key) => {
+    const linkKey = getLink(key);
+    sidebar[linkKey] = siteConfig.sidebar[key].map((group) => ({
+      collapsible: group.collapsible,
+      text: getText(group.text),
+      items: group.items
+        ? group.items.map((item) => ({
+            text: getText(item.text),
+            link: item.link ? getLink(item.link) : '',
+          }))
+        : [],
+    }));
+  });
+
+  return sidebar;
 }
 
 const toFeedItem: PluginRssOption['toFeedItem'] = (page) => {
