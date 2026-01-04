@@ -4,12 +4,7 @@ import { NavItem, Sidebar } from '@rspress/shared';
 import { pluginShiki } from '@rspress/plugin-shiki';
 import { pluginRss, PluginRssOption } from './rspress/plugin-rss';
 import { toArray } from './rspress/plugin-rss/utils';
-import {
-  siteConfig,
-  I18nText,
-  NavItemConfig,
-  SidebarItemConfig,
-} from './site.config';
+import { siteConfig, I18nText } from './site.config';
 
 const PUBLISH_URL = 'https://bytemlperf.ai';
 const COPYRIGHT = '© 2024 Bytedance Inc. All Rights Reserved.';
