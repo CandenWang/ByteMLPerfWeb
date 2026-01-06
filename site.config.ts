@@ -137,6 +137,13 @@ export const siteConfig: SiteConfig = {
             },
             link: '/blog/ts',
           },
+          {
+            text: {
+              zh: 'XPU-simulator 评测工具',
+              en: 'XPU-simulator Benchmark Tool',
+            },
+            link: '/blog/simulator',
+          },
         ],
       },
     ],

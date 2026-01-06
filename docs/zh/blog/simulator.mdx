@@ -1,0 +1,466 @@
+---
+title: '构建开源AI硬件评测工具， ByteMLperf-v1.0 X 天数智芯，扬长避短是关键'
+date: 2025-11-21
+weight: 2
+keywords: ['ByteMLPerf', '天数智芯']
+---
+
+import SupportMatrixTable from './components/SupportMatrixTable';
+import ExperimentsTable from './components/ExperimentsTable';
+import BlogImage from './components/BlogImage';
+import image1 from '../../public/blog/simulator/image1.png';
+
+# Introduction
+
+## What is xpu-simulator
+
+xpu-simulator 是用于大模型和硬件性能评估的仿真器，用于估计在指定硬件平台上的大模型计算流程。
+
+**xpu-simulator 支持矩阵**
+
+<SupportMatrixTable />
+
+# Abstraction
+
+## Directed Acyclic Graph
+
+计算图被建模为有向无环图（DAG），每个节点都是一个标准算子（Standard Operator），在指定的并行方案下可以绑定后端进行延迟测试。
+
+该图建模不依赖于 torch.fx 等标准图建模方案，主要是为了定制节点功能，以及减小理解和使用成本。
+
+该图包含以下要素：
+
+- 输入输出（source，sink）
+- 标准算子
+- 标准算子的并行方案
+- 一个标准算子在指定并行方案后，唯一确定输入 / 输出张量的 layout
+- 连接两个节点的边（Edge），描述两个 layout 之间是否需要插入通信
+
+<BlogImage
+  caption="有向无环图modeling & 分布式张量layout示意图"
+  src="/blog/simulator/image_1.png"
+/>
+
+## Standard Operator
+
+图中的节点称为 “Standard Operator”，这是相对于特定 XPU 上的具体算子实现而言的。
+
+在 xpu-simulator 中，Standard Operator 不关注数值准确性以及具体实现，仅关注输入输出张量的形状特性以及该算子的可行切分、跨多设备执行的方法。
+
+大模型的结构趋于稳定，在现有硬件平台和常用并行方案下，可以抽象出以下几个标准算子：
+
+| 算子名称                              | 算子功能                                                               |
+| ------------------------------------- | ---------------------------------------------------------------------- |
+| ATTN_PRE_NORM                         | 注意力前的 norm                                                        |
+| QKV_MATMUL                            | qkv 生成                                                               |
+| FUSED_KNORM_ROTARY_KV_STORE_DEQUANT   | 融合的多个算子，通常共享算子并行方式，因此融合（降低并行方案搜索空间） |
+| FLASH_ATTENTION                       | flash attention                                                        |
+| CONTEXT_RMSNORM                       | flash attention 之后的 norm                                            |
+| O_PROJ                                | 输出映射                                                               |
+| MOE_PRE_NORM                          | 混合专家前的 norm                                                      |
+| MOE_GATING                            | 混合专家的 gating 模块                                                 |
+| MOE_TOPK_SOFTMAX                      | 对 gating 结果做 topk softmax                                          |
+| MOE_FUSED_SHARD_EXPERT_UP_SWIGLU_DOWN | 共享专家分支（融合 up & gate、swiglu、down 多个算子）                  |
+| MOE_FUSED_EP                          | 混合专家分支（融合 up & gate、swiglu、down 多个算子）                  |
+
+每个标准算子需要实现 `enumerate_schemes` 方法，以支持并行方案的指定、导出和搜索。
+
+对一类算子，其可行切分方式和输入输出 layout 完全一致，例如：
+
+- norm
+- rotary
+- kv cache handling
+
+这类算子可以使用相同的通用基类，然后分别继承。
+
+```python
+class B_T_C_OP(Operator):
+    # 通用基类：保持 [B, T, C] 布局不变，仅在 B/T 任意切分，无规约。
+    # 子类只需改变类名即可复用相同的 i/o 规范与枚举逻辑。
+    def __init__(self, config):
+        spec = {"B": config.B, "T": config.T, "C": config.C}
+        ...
+
+    def enumerate_schemes(self, world_size):
+        spec = self.i_specs["x"]
+        schemes = []
+        for identical_worlds, small_world_size in Operator.factorize_world_size(world_size, 2):
+            # 拆分全同子世界
+            for b_part, t_part in Operator.factorize_world_size(small_world_size, 2):
+                # 在一个小世界中，small_world_size 随意在 B、T 维度上分配
+                partitions = {"B": b_part, "T": t_part, "C": 1}
+                layout = TensorLayout(
+                    spec,
+                    r=1 * identical_worlds,
+                    partitions=partitions,
+                    reduction_group=None,
+                )
+                scheme = ParallelScheme(
+                    key=f"r{identical_worlds}_b{b_part}_t{t_part}",
+                    i_layouts={"x": layout},
+                    o_layouts={"y": layout},
+                )
+                schemes.append(scheme)
+
+        return schemes
+
+
+class ATTN_PRE_NORM(B_T_C_OP):
+    def __init__(self, config):
+        super().__init__(config)
+```
+
+## Dist-Tensor
+
+dist-tensor 是 xpu-simulator 中对分布式张量进行描述的关键组件，用于描述：
+
+- 张量在各个维度上的分片情况（shard）
+- 需要进行规约的情况（partial）
+- 同一张量值在多个设备上的重复情况（replica）
+
+> 一个张量 layout 需要满足约束，即 $\prod d_i * \text\{replica} = \text\{worldsize}$
+>
+> 以上也是 PyTorch 的 DTensor 组件的基本描述方式：[https://docs.pytorch.org/docs/stable/distributed.tensor.html](https://docs.pytorch.org/docs/stable/distributed.tensor.html)
+
+但 PyTorch 的 DTensor 依赖于 2.9 以上的 PyTorch 版本，兼容性较差，因此 xpu-simulator 重新实现了一套。
+
+以下是两个典型的张量分布情况：
+
+1. SP 切分（shard）
+2. TP 切分（shard）
+   <>
+     <BlogImage
+       caption="SP并行下的张量分布：在token维度“T”发生切分"
+       src="/blog/simulator/image_17.jpeg"
+     />
+     <BlogImage
+       caption="TP并行下的张量分布：在头维度“H”发生切分"
+       src="/blog/simulator/image_19.jpeg"
+     />
+   </>
+
+在大模型推理框架下，张量的分布情况通常使用 shard、partial、replica 三种情况描述。同时，这三种特性可能会在一个张量上同时出现。一般地，这几种分布情况的转换可以通过如下几类算子来实现：
+
+- replicated op：以重复计算消除通信时间，如 qkv gen 前的 rmsnorm
+- shard-wise op：具有局部性的算子，比如 flash attention 的切 head，或者 norm 的切 batch / 切 token
+- GeMM TP output channel：矩阵乘 TP，切分输出通道，将输出通道分散到多个设备
+- GeMM TP input channel：矩阵乘 TP，切分输入通道，规约不完全需要 reduce 类通信
+
+<BlogImage caption="不同张量分布的转换" src="/blog/simulator/image_1.png" />
+
+## Communication Between
+
+这是 dist-tensor 的核心功能，用于计算两个不同分布下的通信情况。
+
+该功能可以处理复杂情况，如多条分割轴，输入输出存在重复，或者存在规约语义的情况。
+
+处理思路主要是：
+
+- 划分全同子世界，消去 src 和 dst 共同持有的 replica 因子
+- 若存在规约语义，必须优先消去规约（通过 all-reduce 或 reduce-scatter）
+  - 如果 replica 增加，使用 all-reduce；否则使用 reduce-scatter
+- 消除规约之后，交换各轴的切分因子，接近 dst 的分布情况
+- 最后处理额外的 replica，使用 all-gather，提升 replica 因子，同时消去某个轴上多余的切分因子
+
+文档中通过 6 幅图展示了 `communication_between` 的单元测试结果。
+
+<>
+  <BlogImage
+    images={[
+      {
+        src: '/blog/simulator/image_2.png',
+        alt: 'all reduce',
+        caption: 'all reduce',
+      },
+      {
+        src: '/blog/simulator/image_3.png',
+        alt: 'all2all',
+        caption: 'all2all',
+      },
+      {
+        src: '/blog/simulator/image_4.png',
+        alt: 'all_reduce + all_gather',
+        caption: 'all_reduce + all_gather',
+      },
+    ]}
+  />
+  <BlogImage
+    images={[
+      {
+        src: '/blog/simulator/image_5.png',
+        alt: 'all_reduce + all2all + all_gather',
+        caption: 'all_reduce + all2all + all_gather',
+      },
+      {
+        src: '/blog/simulator/image_6.png',
+        alt: 'shard_drop',
+        caption: 'shard_drop',
+      },
+      {
+        src: '/blog/simulator/image_7.png',
+        alt: 'reduce_scatter',
+        caption: 'reduce_scatter',
+      },
+    ]}
+  />
+</>
+
+## Parallel Scheme
+
+“Parallel Scheme” 指的是单个算子的并行方案。
+
+对单个算子的切分方案严格依赖于该算子的数学特性，例如：
+
+- 对于 norm 类算子，可以任意在 batch / token 维度进行切分（即 DP、SP），但不可在通道维度切分（即 TP）。
+- 对于 flash attention 算子，可以在 head 维度切分实现 TP。
+- 对于 MoE，可以进行 EP，但 local combine 之后会产生规约语义。
+
+对于一整套合理的并行方案，典型的如 flash attention 的组合 TP：
+
+- `qkv_matmul` 切输出通道
+- `flash_attention` 切 head 维度
+- `o_proj` 切输入维度
+
+这样的组合并非 xpu-simulator 的最细粒度。为了支持任意的并行方案组合，xpu-simulator 将最细粒度定义为单算子切分的描述。一个合理的组合可以通过分别对各个算子指定合适的 parallel scheme 来描述。
+
+xpu-simulator 使用一套字符串规则来唯一描述一个并行方案。
+
+> 简单地，对于 norm 类算子，需要描述其重复程度以及在 Batch (B) 和 Token (T) 维度上的切分。
+>
+> 因此其 scheme 可以描述为 `r2_b4_t1` 这样的字符串，分别指定 replica 次数和两个切分情况。
+>
+> 复杂地，对于 `qkv_matmul`，可能会产生规约情况，同时还需要指定输出 TP 切分在 head 维度和 head_dim 之前的切分，因此描述字符串较为复杂，例如：
+>
+> `r1_b4_t1_ci1_co2_h2_hc1`
+>
+> 这是描述 DP4TP2 的切分情况：在 batch 维度切分 4 次，在输出维度切分 2 次。
+>
+> 指定一个标准算子的 scheme key 之后，就可以唯一导出输入和输出的 layout。
+>
+> 对于直筒类算子（如 norm），算子本身的切分就等于输入和输出的切分方案；对于复杂算子，则需要手动编码，例如：
+>
+> - `qkv_matmul` 在进行输出通道的 Tensor Parallel 切分时，输入需要 replica 为 TP 份，输出的 `reduce_group = TP`；
+> - `moe_fused_ep` 输出由于 local combine，没有 replica 和切分，但有 `reduce_group = EP`。
+
+通过为所有标准算子指定并行方案，可以精确描述任意并行方案组合，而不仅仅是使用 DP / SP / TP 等粗粒度标签。
+
+# Functionality
+
+## 指导并行方案设计
+
+在同一计算图 DAG 下，通过指定不同的 scheme 组合，可以评估不同并行方案的效果。
+
+xpu-simulator 可以提供初步的算子与通信延迟估计，用于快速评估某个并行方案是否有收益。与在推理框架中真实实现并行方案并启动服务进行 profiling 相比，仿真虽然牺牲部分精度，但优势在于速度快且无需修改推理框架与部署流程。
+
+例如：
+
+- DP16 vs DP2TP8 vs DP8TP2
+- EP16R4 vs EP64
+- ...
+
+下图为 batch size = 8、seq_len = 8192、后端为 A2 时，DP8 与 DP2TP4 的对比。关注各个算子延迟，可以观察到：
+
+- qkv generation 时拉开明显差距，DP 方案的矩阵更加偏向方形，利用率更高；
+- flash attention 延迟差距很小，即 TP 线性度较高；
+- 整体来看，纯 DP 方案的整体延迟更小。
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_8.png',
+    },
+    {
+      src: '/blog/simulator/image_9.png',
+    },
+  ]}
+/>
+
+## 可视化 & Timeline 导出
+
+通过拓扑排序加上“计算 / 通信双车道”模型，可以完成通算融合后的 timeline 导出。
+
+导出格式为 Chrome trace 的 JSON，可以使用 [perfetto 工具](https://ui.perfetto.dev/) 打开。
+
+### 通算融合原理
+
+把图中的计算与通信按两个串行车道排成时间线，生成事件列表：
+
+- 计算车道（compute lane）：同一时刻只能有一个计算任务（串行）。
+- 通信车道（comm lane）：同一时刻只能有一个通信步骤（串行）。
+- 使用双指针，分别指向当前规划好的计算（`compute_cursor`）和通信（`comm_cursor`）。
+- 按照拓扑序遍历每个节点，计算起始时间：
+  - 必须等待所有入边通信完成，即 `max(edge_comm_finish[in_edges])`；
+  - 不得早于当前计算车道指针，即 `>= compute_cursor`。
+- 记录起始时间，追加事件的 JSON 描述，并推进计算：`compute_cursor += cur_op_latency`。
+- 对该节点调度出边通信：
+  - 依次完成所有出边的通信，并推进通信车道：`comm_cursor += sum(cur_comm_latency)`；
+  - 记录所有通信事件时间。
+- 由于两个车道分别调度，算子的起始时间可以与上一个算子未完成的通信进行交叠，从而实现通算融合。
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_10.jpeg',
+    },
+  ]}
+/>
+
+## 并行方案搜索
+
+通过依次指定所有标准算子的并行方案，可以遍历所有可行方案。
+
+然而大多数并行方案是 non-sense：存在不必要的重复计算以及来回的 layout 通信转换。为了提升搜索效率，需要进行剪枝。
+
+### beam-search 的实现
+
+- 先枚举各算子的可行方案，剔除形状不整除等硬性不合法项。预先收集所有算子 shape 做 warmup，批量获取算子延迟，提升搜索效率（warmup 耗时约 30s）。
+- 局部时序模型：
+  - 两个串行车道：计算车道（compute）与通信车道（comm），各自同一时刻只允许一个事件；
+  - 双指针 `compute_cursor`、`comm_cursor` 表示当前两车道已规划到的时间位置；
+  - 任何节点的计算开始时间必须等待所有入边通信完成，且不早于 `compute_cursor`。
+- beam search：按拓扑序遍历算子节点，尝试不同方案：
+  - 先调度所有入边通信，按通信车道串行推进 `comm_cursor`，并记录通信事件时间；
+  - 再调度该节点的计算（起始时间为 `max{入边完成, compute_cursor}`），记录事件并推进 `compute_cursor`；
+  - 做基本可行性检查（例如输出与后继的并行世界规模匹配），不符则剪枝；
+  - 用当前部分调度的“乐观下界”评估优劣：`lb = max(comm_cursor, compute_cursor)`，作为分支限界；
+  - 将所有扩展后的部分解按 `lb` 排序，仅保留固定宽度（beam 宽度）的前缀，继续下一节点。
+- 输出节点处理：
+  - 对未完整的前缀做轻量补全，形成若干完整方案；
+  - 计算真实端到端时延，选出若干最优解并进行可视化导出。
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_11.png',
+      caption:
+        'bs=1，seqlen=8K prefill的最佳搜索结果即Ulysses并行，与实际部署方案一致',
+    },
+    {
+      src: '/blog/simulator/image_12.png',
+      caption: '一个不是那么好的并行方案',
+    },
+    {
+      src: '/blog/simulator/image_13.png',
+      caption: '一个随机采样的非常差的方案',
+    },
+  ]}
+/>
+
+## PP 仿真
+
+legacy 前端（硬编码网络结构）对 PP 有所支持，后续将拓展 dist-tensor 模块对 PP 提供统一支持。
+
+### 输入形式
+
+- 输入时间矩阵 `t[m][s]`，表示第 m 个 microbatch 在第 s 个 stage 的耗时，可以对各种情况进行完善表述；
+- 输入每个 stage 允许的 buffer 深度 D，表示在不阻塞前一 stage 的前提下，最多可额外容纳多少个 request。
+
+### 仿真约束
+
+1. 互斥约束：一个 stage 在一个时刻只能处理一个 microbatch。
+2. 因果约束：一个 microbatch 在 stage s 的开始时间必须晚于在 stage s-1 的结束时间。
+3. QoS 约束：整个 pipeline 中最多容许 8 个 microbatch。
+
+### 仿真结果
+
+仿真可以产生完整的 trace 图，展示每一个 microbatch 在各个 stage 的执行开始时间、结束时间、被阻塞的时间，以及硬件的空闲时间（bubble）。
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_14.jpeg',
+      caption: '仿真效果：PP中每层的利用情况，整体的利用率情况 & trace',
+    },
+  ]}
+/>
+
+## 拓展标准算子与计算图
+
+标准算子无需实现其 numerical 功能。
+
+其可能的切分方案完全由人工编码在标准算子的 `enumerate_schemes` 实现中，即可支持并行方案的计算 / 导出 / 搜索：
+
+- 若有新型算子（如新的 linear attention、新的矩阵乘堆叠方法等），只需新增标准算子，并根据算子的计算局部性和累加特性实现 `enumerate_schemes` 函数即可支持；
+- 若需要支持新的 transformer block（如 LongCat 的 block 结构），只需新增计算图描述（使用字典描述 DAG 结构）。
+
+# Backends
+
+xpu-simulator 可支持多后端（XPU），后端为动态绑定。
+
+```python
+# 构建 DAG
+dag = ParallelDAG.build(...)
+
+# 构建完 DAG 后再标注延迟
+from backends import xxx_backend
+
+annotate_latencies(dag, xxx_backend)
+```
+
+每个后端需要实现对应的 `enque_operator` 函数，传入参数规模，返回延迟：
+
+- 参数包括模型配置（`model_config`）、并行方案（`scheme`），以及算子名称 `op_name`；
+- `enque_operator` 负责收集计算需求，进行批量计算：
+  - 从 `op_name` 映射到具体算子的单元测试函数，并构建 executor 传递给对应的 profiler；
+  - 构建 executor 时，计算规模从模型配置加并行方案解析出来；
+- 支持扫描存储查找表与离线插值的 fast 模式，牺牲部分精度换取执行速率和离线可用性：
+
+  - 通信延迟仅需指定设备数 N = 2、4、8 等下的各个 message size，插值误差很小，目前可用后端中的通信延迟测试已替换为插值；
+  - 算子延迟插值存在一定误差，因为具体算子性能可能受到各种因素影响而不够线性。为提升插值精度，需要足够细的扫描粒度。
+
+- 新增后端可参考文档：[xpu-simulator 实现新后端接口](https://bytedance.larkoffice.com/wiki/EWiswlGQNim4bVkiq30cAo18nZf)
+
+# Experiments
+
+## 模型仿真 vs 实际 profile 结果
+
+与实际 profile 结果相比，以下两个模型的仿真误差可以控制在 5% 左右（最大 5.37%）。
+
+<ExperimentsTable />
+
+## 带 session cache 仿真相对误差
+
+在 session cache 较长的情况下，误差可控制在 10% 以内。
+
+| kv_len \\ q_len | 1024       | 2048   | 4096       | 8192   | 16384      | 32768  |
+| --------------- | ---------- | ------ | ---------- | ------ | ---------- | ------ |
+| 0               | +4.02%     | +3.78% | +3.35%     | +1.32% | +0.31%     | -3.90% |
+| 1024            | +2.83%     | +2.36% | +2.96%     | +1.62% | +0.72%     | -      |
+| 2048            | -0.97%     | +2.57% | +3.78%     | +1.52% | +1.12%     | -      |
+| 4096            | -1.63%     | +2.33% | +4.44%     | +3.34% | +3.11%     | -      |
+| 8192            | -5.15%     | +1.83% | +5.08%     | +5.08% | +6.29%     | -      |
+| 16384           | **-9.08%** | +1.05% | **+7.35%** | +7.12% | **+9.38%** | -      |
+
+## 算子 & 通信耗时占比可视化
+
+文档中还展示了算子与通信耗时占比的可视化结果，用于分析不同算子和通信在总时延中的占比情况。
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_15.jpeg',
+      caption: '模型1单个Transformer Block耗时占比情况',
+    },
+  ]}
+/>
+
+# 未来工作
+
+- 支持流量建模调度：参见 [【异构硬件】线上流量建模 + Trace_gen](https://bytedance.larkoffice.com/docx/RkF3dyHQroA90Vxe4pdc0dfynZg?from=from_copylink)。
+
+整个方案参考 Apex 进行扩展：[https://github.com/microsoft/apex_plus?tab=readme-ov-file](https://github.com/microsoft/apex_plus?tab=readme-ov-file)
+
+优先考虑推理场景，同时因为 load balancing 等任务与 request 相关，因此对 request 进行建模也是必要的。参考 Apex，整体思路如下：
+
+1. 持续完善 DP + TP + PP 并行的工作（对应左图的 LLM serving simulator）。
+2. 新开发 batching module（request handling），并根据线上数据进行完善。
+3. Parallel execution plan generator：该部分实际为自动化搜索，与 request 最优方案的问题互相依赖，Apex 的方案是根据模版生成。
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_16.jpeg',
+      caption: '模型1单个Transformer Block耗时占比情况',
+    },
+  ]}
+/>

@@ -1,7 +1,6 @@
 import Theme from 'rspress/theme';
 import { HomeLayout } from './HomeLayout';
-// import { RsfamilyNavIcon } from 'rsfamily-nav-icon';
-// import 'rsfamily-nav-icon/dist/index.css';
+import '@arco-design/web-react/dist/css/arco.css';
 
 export * from 'rspress/theme';
 

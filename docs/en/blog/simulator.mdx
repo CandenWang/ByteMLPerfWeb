@@ -1,0 +1,472 @@
+---
+title: 'Building Open Source AI Hardware Evaluation Tool: ByteMLperf-v1.0 X Iluvatar CoreX, Playing to Strengths is Key'
+date: 2025-11-21
+weight: 2
+keywords: ['ByteMLPerf', 'Iluvatar CoreX']
+---
+
+import SupportMatrixTable from './components/SupportMatrixTable';
+import ExperimentsTable from './components/ExperimentsTable';
+import BlogImage from './components/BlogImage';
+
+# Introduction
+
+## What is xpu-simulator
+
+xpu-simulator is a simulator for evaluating the performance of large models and hardware. It is used to estimate the computation flow of large models on specified hardware platforms.
+
+**xpu-simulator Support Matrix**
+
+<SupportMatrixTable />
+
+# Abstraction
+
+## Directed Acyclic Graph
+
+The computation graph is modeled as a Directed Acyclic Graph (DAG), where each node is a Standard Operator. Under a specified parallel scheme, it can bind to a backend for latency testing.
+
+The graph modeling does not depend on standard graph modeling schemes like torch.fx, primarily to customize node functionality and reduce the cost of understanding and usage.
+
+The graph contains the following elements:
+
+- Input/Output (source, sink)
+- Standard Operator
+- Parallel Scheme of Standard Operator
+- A Standard Operator, after specifying a parallel scheme, uniquely determines the input/output tensor layout
+- Edge connecting two nodes, describing whether communication needs to be inserted between two layouts
+
+<BlogImage
+  caption="DAG Modeling & Distributed Tensor Layout Diagram"
+  src="/blog/simulator/image_1.png"
+/>
+
+## Standard Operator
+
+Nodes in the graph are called "Standard Operators", which is relative to specific operator implementations on specific XPUs.
+
+In xpu-simulator, a Standard Operator does not concern itself with numerical accuracy or specific implementation, but only focuses on the shape characteristics of input/output tensors and the methods for feasible splitting and execution across multiple devices for that operator.
+
+The structure of large models tends to be stable. Under existing hardware platforms and common parallel schemes, the following standard operators can be abstracted:
+
+| Operator Name                         | Function                                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| ATTN_PRE_NORM                         | Norm before Attention                                                                                              |
+| QKV_MATMUL                            | QKV Generation                                                                                                     |
+| FUSED_KNORM_ROTARY_KV_STORE_DEQUANT   | Fused multiple operators, usually sharing operator parallelism, thus fused (reducing parallel scheme search space) |
+| FLASH_ATTENTION                       | Flash Attention                                                                                                    |
+| CONTEXT_RMSNORM                       | Norm after Flash Attention                                                                                         |
+| O_PROJ                                | Output Projection                                                                                                  |
+| MOE_PRE_NORM                          | Norm before MoE                                                                                                    |
+| MOE_GATING                            | Gating module for MoE                                                                                              |
+| MOE_TOPK_SOFTMAX                      | TopK Softmax for gating results                                                                                    |
+| MOE_FUSED_SHARD_EXPERT_UP_SWIGLU_DOWN | Shared Expert Branch (Fused up & gate, swiglu, down operators)                                                     |
+| MOE_FUSED_EP                          | MoE Branch (Fused up & gate, swiglu, down operators)                                                               |
+
+Each standard operator needs to implement the `enumerate_schemes` method to support the specification, export, and search of parallel schemes.
+
+For a class of operators, their feasible splitting methods and input/output layouts are completely consistent, for example:
+
+- norm
+- rotary
+- kv cache handling
+
+Such operators can use the same common base class and then inherit separately.
+
+```python
+class B_T_C_OP(Operator):
+    # Common base class: Keeps [B, T, C] layout unchanged, only splits arbitrarily on B/T, no reduction.
+    # Subclasses only need to change the class name to reuse the same i/o specifications and enumeration logic.
+    def __init__(self, config):
+        spec = {"B": config.B, "T": config.T, "C": config.C}
+        ...
+
+    def enumerate_schemes(self, world_size):
+        spec = self.i_specs["x"]
+        schemes = []
+        for identical_worlds, small_world_size in Operator.factorize_world_size(world_size, 2):
+            # Split identical sub-worlds
+            for b_part, t_part in Operator.factorize_world_size(small_world_size, 2):
+                # In a small world, small_world_size is distributed arbitrarily on B and T dimensions
+                partitions = {"B": b_part, "T": t_part, "C": 1}
+                layout = TensorLayout(
+                    spec,
+                    r=1 * identical_worlds,
+                    partitions=partitions,
+                    reduction_group=None,
+                )
+                scheme = ParallelScheme(
+                    key=f"r{identical_worlds}_b{b_part}_t{t_part}",
+                    i_layouts={"x": layout},
+                    o_layouts={"y": layout},
+                )
+                schemes.append(scheme)
+
+        return schemes
+
+
+class ATTN_PRE_NORM(B_T_C_OP):
+    def __init__(self, config):
+        super().__init__(config)
+```
+
+## Dist-Tensor
+
+dist-tensor is a key component in xpu-simulator for describing distributed tensors, used to describe:
+
+- Sharding of tensors in various dimensions (shard)
+- Situations requiring reduction (partial)
+- Duplication of the same tensor value on multiple devices (replica)
+
+> A tensor layout needs to satisfy the constraint: $\prod d_i * \text{replica} = \text{worldsize}$
+>
+> The above is also the basic description method of PyTorch's DTensor component: [https://docs.pytorch.org/docs/stable/distributed.tensor.html](https://docs.pytorch.org/docs/stable/distributed.tensor.html)
+
+However, PyTorch's DTensor relies on PyTorch version 2.9 or higher, which has poor compatibility, so xpu-simulator re-implemented a set.
+
+Here are two typical tensor distribution situations:
+
+1. SP Sharding (shard)
+2. TP Sharding (shard)
+
+<>
+  <BlogImage
+    caption="Tensor distribution under SP parallelism: Split occurs in token dimension 'T'"
+    src="/blog/simulator/image_17.jpeg"
+  />
+  <BlogImage
+    caption="Tensor distribution under TP parallelism: Split occurs in head dimension 'H'"
+    src="/blog/simulator/image_19.jpeg"
+  />
+</>
+
+In large model inference frameworks, tensor distribution is usually described using shard, partial, and replica. At the same time, these three characteristics may appear on a tensor simultaneously. generally, the conversion of these distribution situations can be achieved through the following types of operators:
+
+- replicated op: Eliminates communication time by repetitive computation, such as rmsnorm before qkv gen
+- shard-wise op: Operators with locality, such as slicing head in flash attention, or slicing batch / token in norm
+- GeMM TP output channel: Matrix multiplication TP, slicing output channel, distributing output channel to multiple devices
+- GeMM TP input channel: Matrix multiplication TP, slicing input channel, reduction is not completely needed for reduce type communication
+
+<BlogImage
+  caption="Conversion of different tensor distributions"
+  src="/blog/simulator/image_1.png"
+/>
+
+## Communication Between
+
+This is the core function of dist-tensor, used to calculate the communication situation between two different distributions.
+
+This function can handle complex situations, such as multiple split axes, duplication in input/output, or situations with reduction semantics.
+
+The processing idea is mainly:
+
+- Divide identical sub-worlds, eliminate the replica factor jointly held by src and dst
+- If there is reduction semantics, reduction must be eliminated first (via all-reduce or reduce-scatter)
+  - If replica increases, use all-reduce; otherwise use reduce-scatter
+- After eliminating reduction, exchange the splitting factors of each axis to approach the distribution of dst
+- Finally handle extra replica, use all-gather, increase replica factor, and eliminate excess splitting factor on an axis
+
+The document shows the unit test results of `communication_between` through 6 figures.
+
+<>
+  <BlogImage
+    images={[
+      {
+        src: '/blog/simulator/image_2.png',
+        alt: 'all reduce',
+        caption: 'all reduce',
+      },
+      {
+        src: '/blog/simulator/image_3.png',
+        alt: 'all2all',
+        caption: 'all2all',
+      },
+      {
+        src: '/blog/simulator/image_4.png',
+        alt: 'all_reduce + all_gather',
+        caption: 'all_reduce + all_gather',
+      },
+    ]}
+  />
+  <BlogImage
+    images={[
+      {
+        src: '/blog/simulator/image_5.png',
+        alt: 'all_reduce + all2all + all_gather',
+        caption: 'all_reduce + all2all + all_gather',
+      },
+      {
+        src: '/blog/simulator/image_6.png',
+        alt: 'shard_drop',
+        caption: 'shard_drop',
+      },
+      {
+        src: '/blog/simulator/image_7.png',
+        alt: 'reduce_scatter',
+        caption: 'reduce_scatter',
+      },
+    ]}
+  />
+</>
+
+## Parallel Scheme
+
+"Parallel Scheme" refers to the parallel plan for a single operator.
+
+The splitting scheme for a single operator strictly depends on the mathematical properties of that operator, for example:
+
+- For norm-like operators, splitting can be done arbitrarily in batch / token dimensions (i.e., DP, SP), but not in the channel dimension (i.e., TP).
+- For flash attention operators, TP can be implemented by splitting in the head dimension.
+- For MoE, EP can be performed, but reduction semantics will be generated after local combine.
+
+For a complete set of reasonable parallel schemes, typical ones like combination TP for flash attention:
+
+- `qkv_matmul` splits output channel
+- `flash_attention` splits head dimension
+- `o_proj` splits input dimension
+
+Such a combination is not the finest granularity of xpu-simulator. To support arbitrary parallel scheme combinations, xpu-simulator defines the finest granularity as the description of single operator splitting. A reasonable combination can be described by specifying appropriate parallel schemes for each operator separately.
+
+xpu-simulator uses a set of string rules to uniquely describe a parallel scheme.
+
+> Simply, for norm-like operators, it is necessary to describe their repetition degree and splitting in Batch (B) and Token (T) dimensions.
+>
+> Therefore, its scheme can be described as a string like `r2_b4_t1`, specifying replica times and two splitting situations respectively.
+>
+> Complicatedly, for `qkv_matmul`, reduction situations may occur, and it is also necessary to specify output TP splitting in head dimension and splitting before head_dim, so the description string is more complicated, for example:
+>
+> `r1_b4_t1_ci1_co2_h2_hc1`
+>
+> This describes the splitting situation of DP4TP2: splitting 4 times in batch dimension and 2 times in output dimension.
+>
+> After specifying a scheme key for a standard operator, the input and output layouts can be uniquely derived.
+>
+> For straight-through operators (like norm), the operator's own splitting is equal to the input and output splitting schemes; for complex operators, manual coding is required, for example:
+>
+> - `qkv_matmul` when performing Tensor Parallel splitting on output channel, input needs replica to be TP shares, output `reduce_group = TP`;
+> - `moe_fused_ep` output has no replica and splitting due to local combine, but has `reduce_group = EP`.
+
+By specifying parallel schemes for all standard operators, any parallel scheme combination can be precisely described, not just using coarse-grained labels like DP / SP / TP.
+
+# Functionality
+
+## Guiding Parallel Scheme Design
+
+Under the same computation graph DAG, by specifying different scheme combinations, the effects of different parallel schemes can be evaluated.
+
+xpu-simulator can provide preliminary estimates of operator and communication latency, used to quickly evaluate whether a certain parallel scheme is beneficial. Compared with implementing parallel schemes in inference frameworks and starting services for profiling, although simulation sacrifices some accuracy, its advantage lies in speed and no need to modify inference frameworks and deployment processes.
+
+For example:
+
+- DP16 vs DP2TP8 vs DP8TP2
+- EP16R4 vs EP64
+- ...
+
+The figure below shows the comparison between DP8 and DP2TP4 when batch size = 8, seq_len = 8192, and backend is A2. Focusing on the latency of each operator, it can be observed:
+
+- Significant gap opens up during qkv generation, DP scheme's matrix is more square-like, utilization is higher;
+- Flash attention latency gap is very small, meaning TP linearity is high;
+- Overall, pure DP scheme has smaller overall latency.
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_8.png',
+    },
+    {
+      src: '/blog/simulator/image_9.png',
+    },
+  ]}
+/>
+
+## Visualization & Timeline Export
+
+Through topological sorting plus "compute / communication dual-lane" model, timeline export after communication-computation fusion can be completed.
+
+Export format is Chrome trace JSON, which can be opened using [perfetto tool](https://ui.perfetto.dev/).
+
+### Principle of Communication-Computation Fusion
+
+Arrange computation and communication in the graph into timelines according to two serial lanes, generating event lists:
+
+- Compute lane: Only one compute task at a time (serial).
+- Communication lane (comm lane): Only one communication step at a time (serial).
+- Use dual pointers, pointing to the currently planned computation (`compute_cursor`) and communication (`comm_cursor`) respectively.
+- Traverse each node in topological order, calculate start time:
+  - Must wait for all incoming edge communications to complete, i.e., `max(edge_comm_finish[in_edges])`;
+  - Must not be earlier than the current compute lane pointer, i.e., `>= compute_cursor`.
+- Record start time, append JSON description of the event, and advance computation: `compute_cursor += cur_op_latency`.
+- Schedule outgoing edge communication for this node:
+  - Sequentially complete all outgoing edge communications, and advance communication lane: `comm_cursor += sum(cur_comm_latency)`;
+  - Record all communication event times.
+- Since the two lanes are scheduled separately, the operator's start time can overlap with the unfinished communication of the previous operator, thereby achieving communication-computation fusion.
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_10.jpeg',
+    },
+  ]}
+/>
+
+## Parallel Scheme Search
+
+By sequentially specifying parallel schemes for all standard operators, all feasible schemes can be traversed.
+
+However, most parallel schemes are non-sense: there are unnecessary repetitive computations and back-and-forth layout communication conversions. To improve search efficiency, pruning is needed.
+
+### Implementation of Beam-Search
+
+- First enumerate feasible schemes for each operator, eliminating hard illegal items such as shape indivisibility. Pre-collect all operator shapes for warmup, batch get operator latency, improve search efficiency (warmup takes about 30s).
+- Local timing model:
+  - Two serial lanes: compute lane and comm lane, each allowing only one event at a time;
+  - Dual pointers `compute_cursor`, `comm_cursor` represent the time position currently planned for the two lanes;
+  - Compute start time of any node must wait for all incoming edge communications to complete, and not earlier than `compute_cursor`.
+- Beam search: Traverse operator nodes in topological order, try different schemes:
+  - First schedule all incoming edge communications, advance `comm_cursor` serially according to communication lane, and record communication event times;
+  - Then schedule the computation of this node (start time is `max{incoming completion, compute_cursor}`), record event and advance `compute_cursor`;
+  - Perform basic feasibility checks (e.g., output matches successor's parallel world scale), prune if not matching;
+  - Use the "optimistic lower bound" of the currently partially scheduled part to evaluate pros and cons: `lb = max(comm_cursor, compute_cursor)`, as branch bound;
+  - Sort all expanded partial solutions by `lb`, keep only the prefix of fixed width (beam width), continue to the next node.
+- Output node processing:
+  - Perform lightweight completion for incomplete prefixes to form several complete schemes;
+  - Calculate real end-to-end latency, select several optimal solutions and perform visualization export.
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_11.png',
+      caption:
+        'Search result for bs=1, seqlen=8K prefill, best is Ulysses parallelism, consistent with actual deployment scheme',
+    },
+    {
+      src: '/blog/simulator/image_12.png',
+      caption: 'A not-so-good parallel scheme',
+    },
+    {
+      src: '/blog/simulator/image_13.png',
+      caption: 'A randomly sampled very poor scheme',
+    },
+  ]}
+/>
+
+## PP Simulation
+
+Legacy frontend (hard-coded network structure) has some support for PP, and subsequently dist-tensor module will be extended to provide unified support for PP.
+
+### Input Form
+
+- Input time matrix `t[m][s]`, representing the time consumed by the m-th microbatch in the s-th stage, can describe various situations perfectly;
+- Input buffer depth D allowed for each stage, representing how many extra requests can be accommodated without blocking the previous stage.
+
+### Simulation Constraints
+
+1. Mutual Exclusion Constraint: A stage can only process one microbatch at a time.
+2. Causal Constraint: The start time of a microbatch in stage s must be later than the end time in stage s-1.
+3. QoS Constraint: At most 8 microbatches are allowed in the entire pipeline.
+
+### Simulation Results
+
+Simulation can produce a complete trace graph, showing the execution start time, end time, blocked time, and hardware idle time (bubble) of each microbatch in each stage.
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_14.jpeg',
+      caption:
+        'Simulation effect: Utilization of each layer in PP, overall utilization & trace',
+    },
+  ]}
+/>
+
+## Extending Standard Operators and Computation Graph
+
+Standard operators do not need to implement their numerical functionality.
+
+Their possible splitting schemes are completely manually coded in the `enumerate_schemes` implementation of the standard operator, which can support calculation / export / search of parallel schemes:
+
+- If there is a new type of operator (such as new linear attention, new matrix multiplication stacking method, etc.), just add a new standard operator and implement the `enumerate_schemes` function according to the operator's computation locality and accumulation characteristics to support it;
+- If a new transformer block needs to be supported (such as LongCat's block structure), just add a new computation graph description (describe DAG structure using dictionary).
+
+# Backends
+
+xpu-simulator supports multiple backends (XPU), with dynamic binding.
+
+```python
+# Build DAG
+dag = ParallelDAG.build(...)
+
+# Annotate latencies after building DAG
+from backends import xxx_backend
+
+annotate_latencies(dag, xxx_backend)
+```
+
+Each backend needs to implement the corresponding `enque_operator` function, passing in parameter scale and returning latency:
+
+- Parameters include model configuration (`model_config`), parallel scheme (`scheme`), and operator name `op_name`;
+- `enque_operator` is responsible for collecting computation requirements and performing batch computation:
+  - Map from `op_name` to specific operator unit test function, and build executor to pass to corresponding profiler;
+  - When building executor, computation scale is parsed from model configuration plus parallel scheme;
+- Supports fast mode scanning storage lookup table and offline interpolation, sacrificing some precision for execution speed and offline availability:
+
+  - Communication latency only needs to specify various message sizes under device count N = 2, 4, 8, etc., interpolation error is very small, currently communication latency tests in available backends have been replaced by interpolation;
+  - Operator latency interpolation has some error because specific operator performance may be affected by various factors and not linear enough. To improve interpolation accuracy, sufficiently fine scanning granularity is needed.
+
+- New backend reference document: [xpu-simulator Implement New Backend Interface](https://bytedance.larkoffice.com/wiki/EWiswlGQNim4bVkiq30cAo18nZf)
+
+# Experiments
+
+## Model Simulation vs Actual Profile Results
+
+Compared with actual profile results, the simulation error of the following two models can be controlled within about 5% (maximum 5.37%).
+
+<ExperimentsTable />
+
+## Relative Error of Simulation with Session Cache
+
+In the case of long session cache, the error can be controlled within 10%.
+
+| kv_len \\ q_len | 1024       | 2048   | 4096       | 8192   | 16384      | 32768  |
+| --------------- | ---------- | ------ | ---------- | ------ | ---------- | ------ |
+| 0               | +4.02%     | +3.78% | +3.35%     | +1.32% | +0.31%     | -3.90% |
+| 1024            | +2.83%     | +2.36% | +2.96%     | +1.62% | +0.72%     | -      |
+| 2048            | -0.97%     | +2.57% | +3.78%     | +1.52% | +1.12%     | -      |
+| 4096            | -1.63%     | +2.33% | +4.44%     | +3.34% | +3.11%     | -      |
+| 8192            | -5.15%     | +1.83% | +5.08%     | +5.08% | +6.29%     | -      |
+| 16384           | **-9.08%** | +1.05% | **+7.35%** | +7.12% | **+9.38%** | -      |
+
+## Visualization of Operator & Communication Time Consumption Ratio
+
+The document also shows the visualization results of operator and communication time consumption ratio, used to analyze the proportion of different operators and communications in the total delay.
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_15.jpeg',
+      caption:
+        'Time consumption ratio of a single Transformer Block in Model 1',
+    },
+  ]}
+/>
+
+# Future Work
+
+- Support traffic modeling scheduling: See [Heterogeneous Hardware Online Traffic Modeling + Trace_gen](https://bytedance.larkoffice.com/docx/RkF3dyHQroA90Vxe4pdc0dfynZg?from=from_copylink).
+
+The entire scheme is extended referencing Apex: [https://github.com/microsoft/apex_plus?tab=readme-ov-file](https://github.com/microsoft/apex_plus?tab=readme-ov-file)
+
+Prioritize inference scenarios. At the same time, because tasks like load balancing are related to requests, it is also necessary to model requests. Referencing Apex, the overall idea is as follows:
+
+1. Continuously improve DP + TP + PP parallel work (corresponding to LLM serving simulator in the left figure).
+2. Develop new batching module (request handling) and improve based on online data.
+3. Parallel execution plan generator: This part is actually automated search, interdependent with the problem of optimal request scheme, Apex's scheme is generated based on templates.
+
+<BlogImage
+  images={[
+    {
+      src: '/blog/simulator/image_16.jpeg',
+      caption:
+        'Time consumption ratio of a single Transformer Block in Model 1',
+    },
+  ]}
+/>
