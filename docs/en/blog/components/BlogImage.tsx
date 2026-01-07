@@ -27,14 +27,12 @@ const BlogImage: React.FC<BlogImageProps> = ({
   images = [],
   layout = 'row',
 }) => {
-  // Normalize input to array of items
   const items = images.length > 0 ? images : src ? [{ src, alt, caption }] : [];
 
   if (items.length === 0) {
     return null;
   }
 
-  // Determine container classes based on item count and layout
   const containerClasses =
     items.length > 1
       ? `flex gap-4 w-full justify-center items-start ${
@@ -42,18 +40,15 @@ const BlogImage: React.FC<BlogImageProps> = ({
         }`
       : 'flex justify-center w-full';
 
-  // Determine item width classes
   const itemStyle =
-    items.length > 1 && layout !== 'col'
-      ? { flex: 1, minWidth: '0' } // allow shrinking/growing equally
-      : {};
+    items.length > 1 && layout !== 'col' ? { flex: 1, minWidth: '0' } : {};
 
   const content = (
     <div className={containerClasses}>
       {items.map((item, index) => (
         <div
           key={index}
-          className="flex flex-col items-center max-w-full"
+          className="flex flex-col items-center max-w-full gap-2"
           style={itemStyle}
           onClick={(e) => e.stopPropagation()}
         >
@@ -73,9 +68,9 @@ const BlogImage: React.FC<BlogImageProps> = ({
             }}
           />
           {item.caption && (
-            <span className="mt-3 text-sm text-gray-500 dark:text-gray-400 text-center font-medium leading-tight max-w-[90%]">
+            <div className="text-sm text-gray-500 text-center max-w-[90%]">
               {item.caption}
-            </span>
+            </div>
           )}
         </div>
       ))}
@@ -90,6 +85,9 @@ const BlogImage: React.FC<BlogImageProps> = ({
         }
         .arco-image-preview-wrapper {
           z-index: 10000 !important;
+        }
+        .arco-image-preview-img {
+          background-color: white !important;
         }
       `}</style>
       <Image.PreviewGroup>{content}</Image.PreviewGroup>

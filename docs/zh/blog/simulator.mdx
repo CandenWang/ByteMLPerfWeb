@@ -141,12 +141,17 @@ dist-tensor 是 xpu-simulator 中对分布式张量进行描述的关键组件�
 
 在大模型推理框架下，张量的分布情况通常使用 shard、partial、replica 三种情况描述。同时，这三种特性可能会在一个张量上同时出现。一般地，这几种分布情况的转换可以通过如下几类算子来实现：
 
-- replicated op：以重复计算消除通信时间，如 qkv gen 前的 rmsnorm
-- shard-wise op：具有局部性的算子，比如 flash attention 的切 head，或者 norm 的切 batch / 切 token
-- GeMM TP output channel：矩阵乘 TP，切分输出通道，将输出通道分散到多个设备
-- GeMM TP input channel：矩阵乘 TP，切分输入通道，规约不完全需要 reduce 类通信
-
-<BlogImage caption="不同张量分布的转换" src="/blog/simulator/image_1.png" />
+<div style={{ display: 'flex', gap: '20px' }}>
+  <BlogImage
+    style={{ width: '50%' }}
+    caption="不同张量分布的转换"
+    src="/blog/simulator/image_1.png"
+  />
+  - replicated op：以重复计算消除通信时间，如 qkv gen 前的 rmsnorm - shard-wise op：具有局部性的算子，比如
+  flash attention 的切 head，或者 norm 的切 batch / 切 token - GeMM TP output channel：矩阵乘
+  TP，切分输出通道，将输出通道分散到多个设备 - GeMM TP input channel：矩阵乘 TP，切分输入通道，规约不完全需要
+  reduce 类通信
+</div>
 
 ## Communication Between
 
@@ -452,15 +457,17 @@ annotate_latencies(dag, xxx_backend)
 
 优先考虑推理场景，同时因为 load balancing 等任务与 request 相关，因此对 request 进行建模也是必要的。参考 Apex，整体思路如下：
 
-1. 持续完善 DP + TP + PP 并行的工作（对应左图的 LLM serving simulator）。
-2. 新开发 batching module（request handling），并根据线上数据进行完善。
-3. Parallel execution plan generator：该部分实际为自动化搜索，与 request 最优方案的问题互相依赖，Apex 的方案是根据模版生成。
-
-<BlogImage
-  images={[
-    {
-      src: '/blog/simulator/image_16.jpeg',
-      caption: '模型1单个Transformer Block耗时占比情况',
-    },
-  ]}
-/>
+<div style={{ display: 'flex', gap: '20px' }}>
+  <BlogImage
+    images={[
+      {
+        src: '/blog/simulator/image_16.jpeg',
+        caption: '模型1单个Transformer Block耗时占比情况',
+      },
+    ]}
+  />
+  1. 持续完善 DP + TP + PP 并行的工作（对应左图的 LLM serving simulator）。 2. 新开发
+  batching module（request handling），并根据线上数据进行完善。 3. Parallel execution
+  plan generator：该部分实际为自动化搜索，与 request 最优方案的问题互相依赖，Apex
+  的方案是根据模版生成。
+</div>

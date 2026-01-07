@@ -1,0 +1,429 @@
+{
+    "Operator": "ALLREDUCE",
+    "Backend": "MLU",
+    "Host Info": "Hygon C86 7490 64-core Processor",
+    "Numa Info": "8;0-15,128-143;16-31,144-159;32-47,160-175;48-63,176-191;64-79,192-207;80-95,208-223;96-111,224-239;112-127,240-254",
+    "Device Info": "MLU590-M9DK",
+    "Version": "1.0.0",
+    "Execution Date": "2025-03-19 17:09:17",
+    "Consistency": [
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    8,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    16,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    32,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    64,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    128,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    256,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    512,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    1024,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    2048,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    4096,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    8192,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    16384,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    32768,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    65536,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    131072,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    262144,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    524288,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    1048576,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        },
+        {
+            "Dtype": "float32",
+            "Tensor Shapes": [
+                [
+                    2097152,
+                    1024
+                ]
+            ],
+            "Group Size": [
+                16
+            ],
+            "Accuracy Consistency": [
+                {
+                    "op_param": [
+                        ""
+                    ],
+                    "consistency": [
+                        true
+                    ]
+                }
+            ]
+        }
+    ]
+}

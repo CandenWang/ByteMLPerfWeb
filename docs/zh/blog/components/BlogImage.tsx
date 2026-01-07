@@ -12,6 +12,8 @@ interface BlogImageProps {
   src?: string;
   /** Single image alt text */
   alt?: string;
+  /** Image style */
+  style?: React.CSSProperties;
   /** Single image caption */
   caption?: string;
   /** Array of images for multi-image display */
@@ -21,6 +23,7 @@ interface BlogImageProps {
 }
 
 const BlogImage: React.FC<BlogImageProps> = ({
+  style,
   src,
   alt,
   caption,
@@ -38,7 +41,7 @@ const BlogImage: React.FC<BlogImageProps> = ({
   const containerClasses =
     items.length > 1
       ? `flex gap-4 w-full justify-center items-start ${
-          layout === 'col' ? 'flex-col items-center' : ' sm:flex-row'
+          layout === 'col' ? 'flex-col items-center' : 'sm:flex-row'
         }`
       : 'flex justify-center w-full';
 
@@ -53,7 +56,7 @@ const BlogImage: React.FC<BlogImageProps> = ({
       {items.map((item, index) => (
         <div
           key={index}
-          className="flex flex-col items-center max-w-full"
+          className="flex flex-col items-center max-w-full gap-3"
           style={itemStyle}
           onClick={(e) => e.stopPropagation()}
         >
@@ -73,9 +76,9 @@ const BlogImage: React.FC<BlogImageProps> = ({
             }}
           />
           {item.caption && (
-            <span className="mt-3 text-sm text-gray-500 dark:text-gray-400 text-center font-medium leading-tight max-w-[90%]">
+            <div className="text-sm text-gray-500 dark:text-gray-400 text-center font-medium leading-tight max-w-[90%]">
               {item.caption}
-            </span>
+            </div>
           )}
         </div>
       ))}
@@ -83,7 +86,18 @@ const BlogImage: React.FC<BlogImageProps> = ({
   );
 
   return (
-    <div className="my-4 w-[80%]">
+    <div className="my-4 w-full" style={style}>
+      <style>{`
+        .arco-image-preview-mask {
+          background-color: rgba(0, 0, 0, 0.6) !important;
+        }
+        .arco-image-preview-wrapper {
+          z-index: 10000 !important;
+        }
+        .arco-image-preview-img {
+          background-color: white !important;
+        }
+      `}</style>
       {/* <Image.PreviewGroup> */}
       {content}
       {/* </Image.PreviewGroup> */}

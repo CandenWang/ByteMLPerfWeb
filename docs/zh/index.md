@@ -76,7 +76,7 @@ articles:
       - title: 'XPU-training benchmark'
         desc: '以确定性，准确性，容错性为核心，探索模型在训练过程中的性能表现。探索模型在训练过程中的收敛性，和训练速度。'
         image: 'https://images.unsplash.com/photo-1550041473-d296a1a8ec52?q=80&w=1000&auto=format&fit=crop'
-        link: '/zh/blog/graphcore'
+        link: '/zh/blog/training'
       - title: 'XPU-simulator'
         desc: '针对不同 AI 硬件架构的深度评测，分析其在不同工作负载下的表现，提供选型建议和优化方向。'
         image: 'https://images.unsplash.com/photo-1591453089816-0fbb971b454c?q=80&w=1000&auto=format&fit=crop'

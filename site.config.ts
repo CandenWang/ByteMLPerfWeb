@@ -139,6 +139,13 @@ export const siteConfig: SiteConfig = {
           },
           {
             text: {
+              zh: 'XPU-training 评测工具',
+              en: 'XPU-training Benchmark Tool',
+            },
+            link: '/blog/training',
+          },
+          {
+            text: {
               zh: 'XPU-simulator 评测工具',
               en: 'XPU-simulator Benchmark Tool',
             },

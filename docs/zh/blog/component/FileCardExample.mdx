@@ -1,0 +1,92 @@
+# FileCard Component Example
+
+This example shows how to use the FileCard component to display and interact with various file types.
+
+## Basic Usage
+
+### Card Mode (Default)
+
+```tsx
+import FileCard from './FileCard';
+
+<FileCard
+  title="JSON File Example"
+  filePath="/blog/data/file_allreduce-float32-group16.json"
+  description="AllReduce performance comparison data"
+  fileName="allreduce-performance.json"
+  displayMode="card"
+/>;
+```
+
+### Text Mode
+
+```tsx
+<FileCard
+  title="Log File Example (Text Link)"
+  filePath="/blog/data/file_0425_A100_2nodes_layers14_loadckpt_drop.log"
+  fileName="training.log"
+  displayMode="text"
+/>
+```
+
+## Props
+
+| Prop        | Type             | Required | Default | Description                                |
+| ----------- | ---------------- | -------- | ------- | ------------------------------------------ |
+| title       | string           | Yes      | -       | The title of the card or text              |
+| filePath    | string           | Yes      | -       | The path to the file to be displayed       |
+| description | string           | No       | -       | Additional description (used in card mode) |
+| fileName    | string           | No       | -       | The name used when downloading the file    |
+| displayMode | 'card' \| 'text' | No       | 'card'  | Display style of the component             |
+
+## Features
+
+- **Two Display Modes**: Support both Card and Text Link styles
+- **Clickable**: Click to open fullscreen view
+- **Fullscreen Preview**: Displays file content in fullscreen mode
+- **File Support**: Supports text-based files (JSON, log, txt, etc.)
+- **Download Functionality**: Download the file with a single click
+- **Smooth Animation**: Fade-in animation when opening fullscreen
+- **Responsive Design**: Adapts to different screen sizes
+- **Tailwind CSS**: Styled using Tailwind utility classes
+
+## Example Implementation
+
+```tsx
+import React from 'react';
+import FileCard from './FileCard';
+
+const ExamplePage: React.FC = () => {
+  return (
+    <div>
+      <h1>File Examples</h1>
+
+      <h2>Card Mode</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        <FileCard
+          title="JSON File"
+          filePath="/blog/data/file_allreduce-float32-group16.json"
+          description="JSON format data file"
+        />
+
+        <FileCard
+          title="Log File"
+          filePath="/blog/data/file_0425_A100_2nodes_layers14_loadckpt_drop.log"
+          description="Training log output"
+        />
+      </div>
+
+      <h2>Text Mode</h2>
+      <div className="flex flex-col gap-2">
+        <FileCard
+          title="Download Log File"
+          filePath="/blog/data/file_m9dk_dropout_attn0.1_mlp0.1_work1_32nodes.txt"
+          displayMode="text"
+        />
+      </div>
+    </div>
+  );
+};
+
+export default ExamplePage;
+```

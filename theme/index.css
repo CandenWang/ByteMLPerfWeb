@@ -15,7 +15,7 @@ summary {
   --rp-c-brand-darker: #3367af;
   --rp-c-brand-tint: rgba(127, 163, 255, 0.16);
   --rp-code-title-bg: rgba(61, 171, 250, 0.15);
-  --rp-code-block-bg: rgba(135, 231, 244, 0.05);
+  /* --rp-code-block-bg: rgba(135, 231, 244, 0.05); */
   --rp-custom-block-info-bg: rgba(250, 192, 61, 0.05);
   --rp-custom-block-info-border: rgba(250, 192, 61, 0.5);
 }
