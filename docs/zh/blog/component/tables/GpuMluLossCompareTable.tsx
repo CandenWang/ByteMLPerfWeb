@@ -1,9 +1,9 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgMoe21 from '../public/img_PM1lb44WLocjdixafGCcM0qBnFs.png';
-import imgMoe24 from '../public/img_NWpobfvJgoxSyEx1RgQcjjS8nAh.png';
-import imgMoe66 from '../public/img_NEpJbVOZKoWz83xo0xzceJqxnqb.png';
+const imgMoe21 = '/blog/data/img_PM1lb44WLocjdixafGCcM0qBnFs.png';
+const imgMoe24 = '/blog/data/img_NWpobfvJgoxSyEx1RgQcjjS8nAh.png';
+const imgMoe66 = '/blog/data/img_NEpJbVOZKoWz83xo0xzceJqxnqb.png';
 
 const columns = [
   { title: '实验模型', width: 100, dataIndex: 'model' },

@@ -46,7 +46,6 @@ const FileCard: React.FC<FileCardProps> = ({
         );
       }
       setContent(text);
-      Message.success('File loaded successfully');
     } catch {
     } finally {
       setLoading(false);

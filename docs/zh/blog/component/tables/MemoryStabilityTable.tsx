@@ -1,14 +1,14 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgMaxAllocGpu from '../public/img_MxR5b86s9oS71RxIEY6cbgXgnkb.png';
-import imgMaxAllocMlu from '../public/img_TsGQbFNq8oYAppxBWrrc8fR0nkg.png';
-import imgMaxReserveGpu from '../public/img_WqJpbhwz3olvWNxGAQxcgAzxnah.png';
-import imgMaxReserveMlu from '../public/img_MggPbjDFzox7aCxfnLwcGSibnXc.png';
-import imgFragmentGpu from '../public/img_C71ybV7Kyo1DoKxnGcLcUC9dn0d.png';
-import imgFragmentMlu from '../public/img_Rq4GbjJRuozG9fxJaF2ctMDFn7g.png';
-import imgLossGpu from '../public/img_RqV6bEwzxoneBfxSEaLccTHwn77.png';
-import imgLossMlu from '../public/img_XDTNb1kkToayyxxz71bcCFhFnnd.png';
+const imgMaxAllocGpu = '/blog/data/img_MxR5b86s9oS71RxIEY6cbgXgnkb.png';
+const imgMaxAllocMlu = '/blog/data/img_TsGQbFNq8oYAppxBWrrc8fR0nkg.png';
+const imgMaxReserveGpu = '/blog/data/img_WqJpbhwz3olvWNxGAQxcgAzxnah.png';
+const imgMaxReserveMlu = '/blog/data/img_MggPbjDFzox7aCxfnLwcGSibnXc.png';
+const imgFragmentGpu = '/blog/data/img_C71ybV7Kyo1DoKxnGcLcUC9dn0d.png';
+const imgFragmentMlu = '/blog/data/img_Rq4GbjJRuozG9fxJaF2ctMDFn7g.png';
+const imgLossGpu = '/blog/data/img_RqV6bEwzxoneBfxSEaLccTHwn77.png';
+const imgLossMlu = '/blog/data/img_XDTNb1kkToayyxxz71bcCFhFnnd.png';
 
 const columns = [
   { title: '测试数据类型', width: 240, dataIndex: 'type' },

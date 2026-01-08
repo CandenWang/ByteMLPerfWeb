@@ -1,14 +1,14 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgCos from '../public/img_FmDWbKDKVosrMMx8OroclbjunUh.png';
-import imgSin from '../public/img_V6o5b9jUMo8B5kxcLSAcGZjtn6f.png';
-import imgExp from '../public/img_GK5SbxGhRoNntcxYMmrcNy37nib.png';
-import imgGelu from '../public/img_FCZjb3y9UowDdrxCUvsc8dDknad.png';
-import imgLog from '../public/img_Hy0NbUVsTovOmBxrXzfcW6Ymnif.png';
-import imgSilu from '../public/img_CvDxbfvKjoq8R7xnP2acNmTEnCc.png';
-import imgSqrt from '../public/img_TA8pbJcqLom0gmxjCyWcWPvRngb.png';
-import imgDiv from '../public/img_GfIDbQ34KoLIf0xJwzSc8vh8n2c.png';
+const imgCos = '/blog/data/img_FmDWbKDKVosrMMx8OroclbjunUh.png';
+const imgSin = '/blog/data/img_V6o5b9jUMo8B5kxcLSAcGZjtn6f.png';
+const imgExp = '/blog/data/img_GK5SbxGhRoNntcxYMmrcNy37nib.png';
+const imgGelu = '/blog/data/img_FCZjb3y9UowDdrxCUvsc8dDknad.png';
+const imgLog = '/blog/data/img_Hy0NbUVsTovOmBxrXzfcW6Ymnif.png';
+const imgSilu = '/blog/data/img_CvDxbfvKjoq8R7xnP2acNmTEnCc.png';
+const imgSqrt = '/blog/data/img_TA8pbJcqLom0gmxjCyWcWPvRngb.png';
+const imgDiv = '/blog/data/img_GfIDbQ34KoLIf0xJwzSc8vh8n2c.png';
 
 const columns = [
   { title: 'SFU 指令', dataIndex: 'op', width: 100 },

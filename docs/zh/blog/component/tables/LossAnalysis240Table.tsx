@@ -1,10 +1,10 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgStep1to800 from '../public/img_APo9bTXs1oQcbhxfVZXciOMbnLe.png';
-import imgStep2311to3184 from '../public/img_Ps7jbEjtto3K1QxBA3UctGmCnWg.png';
-import imgStep635to2311 from '../public/img_Fg3qbMKxco0RZIxweYqcNaHIn1y.png';
-import imgH800Twice from '../public/img_QdSQbaOMGoGDAzxr8nYcijNZnrb.png';
+const imgStep1to800 = '/blog/data/img_APo9bTXs1oQcbhxfVZXciOMbnLe.png';
+const imgStep2311to3184 = '/blog/data/img_Ps7jbEjtto3K1QxBA3UctGmCnWg.png';
+const imgStep635to2311 = '/blog/data/img_Fg3qbMKxco0RZIxweYqcNaHIn1y.png';
+const imgH800Twice = '/blog/data/img_QdSQbaOMGoGDAzxr8nYcijNZnrb.png';
 
 const columns = [
   { title: '训练 step 区间', width: 240, dataIndex: 'step' },

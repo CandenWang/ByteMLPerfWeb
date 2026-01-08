@@ -1,12 +1,12 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgVarMaxAllocGpu from '../public/img_M7t4bcDeaoVUwGxceNZcSoWRnZb.png';
-import imgVarMaxAllocMlu from '../public/img_PjnBbpPrSouN2uxw61RcnVrHnGg.png';
-import imgVarMaxReserveGpu from '../public/img_Eg7obFp6QoHqFBxCKJkcL0MqnLb.png';
-import imgVarMaxReserveMlu from '../public/img_KS8obOkSyoiRtExhGMCcWmeBnUc.png';
-import imgVarFragmentGpu from '../public/img_ZkQ1bZkV7oaXZCxZnC5c5Qfhn1W.png';
-import imgVarFragmentMlu from '../public/img_FBp0bkz2CoIsuyxO3FPcIzc2nGf.png';
+const imgVarMaxAllocGpu = '/blog/data/img_M7t4bcDeaoVUwGxceNZcSoWRnZb.png';
+const imgVarMaxAllocMlu = '/blog/data/img_PjnBbpPrSouN2uxw61RcnVrHnGg.png';
+const imgVarMaxReserveGpu = '/blog/data/img_Eg7obFp6QoHqFBxCKJkcL0MqnLb.png';
+const imgVarMaxReserveMlu = '/blog/data/img_KS8obOkSyoiRtExhGMCcWmeBnUc.png';
+const imgVarFragmentGpu = '/blog/data/img_ZkQ1bZkV7oaXZCxZnC5c5Qfhn1W.png';
+const imgVarFragmentMlu = '/blog/data/img_FBp0bkz2CoIsuyxO3FPcIzc2nGf.png';
 
 const columns = [
   { title: '测试数据类型', dataIndex: 'type' },

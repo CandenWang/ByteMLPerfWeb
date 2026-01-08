@@ -1,7 +1,7 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgMatmul from '../public/img_MMgWbx0W0oYSkqxFf6acrSECnIc.png';
+const imgMatmul = '/blog/data/img_MMgWbx0W0oYSkqxFf6acrSECnIc.png';
 
 const columns = [
   { title: '算子', dataIndex: 'op' },

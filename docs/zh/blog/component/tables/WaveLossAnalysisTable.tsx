@@ -1,8 +1,8 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgStdVsLoss from '../public/img_FPQKbhXsMoGlCxxmXROcsI5Fnyg.png';
-import imgCapacityOff from '../public/img_CuOAb71Lwoh090xYNHccgBzQn8g.png';
+const imgStdVsLoss = '/blog/data/img_FPQKbhXsMoGlCxxmXROcsI5Fnyg.png';
+const imgCapacityOff = '/blog/data/img_CuOAb71Lwoh090xYNHccgBzQn8g.png';
 
 const columns = [
   { title: '现象', width: 240, dataIndex: 'phenomenon' },

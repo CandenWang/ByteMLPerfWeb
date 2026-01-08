@@ -1,8 +1,8 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgAllReduce1 from '../public/img_QZnHbYLJFoqtq1xc50ycu4rZn3Y.png';
-import imgAllReduce2 from '../public/img_DX2QbPPzko3kLVx2Oc3cMToGnyh.png';
+const imgAllReduce1 = '/blog/data/img_QZnHbYLJFoqtq1xc50ycu4rZn3Y.png';
+const imgAllReduce2 = '/blog/data/img_DX2QbPPzko3kLVx2Oc3cMToGnyh.png';
 
 const columns = [
   { title: '通信原语', width: 120, dataIndex: 'op' },

@@ -1,12 +1,12 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgMax4k from '../public/img_OjtbbOfBJoQ25kx7NXrcSgB7nlh.png';
-import imgMean4k from '../public/img_HwknbVf5Yo3R7SxMcv1c0XbnnWf.png';
-import imgMax8k from '../public/img_AbRlbUO6Coj2UKxDkwjc1c7mnOb.png';
-import imgMean8k from '../public/img_CtnubNcXPoLkRSxckb8cjvx2nie.png';
-import imgMax16k from '../public/img_LElIbzqyHoboC3x9PjZcv20SnNd.png';
-import imgMean16k from '../public/img_TnffbaBIfo7rx5xm63jcqClon9c.png';
+const imgMax4k = '/blog/data/img_OjtbbOfBJoQ25kx7NXrcSgB7nlh.png';
+const imgMean4k = '/blog/data/img_HwknbVf5Yo3R7SxMcv1c0XbnnWf.png';
+const imgMax8k = '/blog/data/img_AbRlbUO6Coj2UKxDkwjc1c7mnOb.png';
+const imgMean8k = '/blog/data/img_CtnubNcXPoLkRSxckb8cjvx2nie.png';
+const imgMax16k = '/blog/data/img_LElIbzqyHoboC3x9PjZcv20SnNd.png';
+const imgMean16k = '/blog/data/img_TnffbaBIfo7rx5xm63jcqClon9c.png';
 
 const columns = [
   {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgMultiStream from '../public/img_R1IBbGwgToKCIUxY7ZLcZ0QTnzg.png';
+const imgMultiStream = '/blog/data/img_R1IBbGwgToKCIUxY7ZLcZ0QTnzg.png';
 
 const columns = [
   { title: '能力项', dataIndex: 'item' },

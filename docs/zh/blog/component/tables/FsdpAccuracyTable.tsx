@@ -1,9 +1,9 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
 
-import imgGpuLoss from '../public/img_UR9sbU81Bo7YKIxAd3FcyiQ2n7d.png';
-import imgMluLoss from '../public/img_MAJFbk1zpojc7Hxc1vHc0Dhjnad.png';
-import imgLossDiff from '../public/img_AxULbhDk9oS0tYx2Vu0cGVcMnQf.png';
+const imgGpuLoss = '/blog/data/img_UR9sbU81Bo7YKIxAd3FcyiQ2n7d.png';
+const imgMluLoss = '/blog/data/img_MAJFbk1zpojc7Hxc1vHc0Dhjnad.png';
+const imgLossDiff = '/blog/data/img_AxULbhDk9oS0tYx2Vu0cGVcMnQf.png';
 
 const columns = [
   {
