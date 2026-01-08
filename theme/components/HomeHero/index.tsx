@@ -68,7 +68,7 @@ export function HomeHero({ hero }: { hero: Hero }) {
                       isActive ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }
                     }
                     transition={{ duration: 0.5, delay: 0.2, ease: 'easeOut' }}
-                    className="font-bold text-[36px] text-[var(--rp-c-text-1)]"
+                    className="font-bold text-[36px] text-[var(--rp-c-text-1)] max-w-max"
                     onMouseEnter={() => setIsPaused(true)}
                     onMouseLeave={() => setIsPaused(false)}
                   >
@@ -100,7 +100,7 @@ export function HomeHero({ hero }: { hero: Hero }) {
                       isActive ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }
                     }
                     transition={{ duration: 0.5, delay: 0.4, ease: 'easeOut' }}
-                    className="flex gap-3 mt-1.5"
+                    className="flex gap-3 mt-1.5 max-w-max"
                     onMouseEnter={() => setIsPaused(true)}
                     onMouseLeave={() => setIsPaused(false)}
                   >
