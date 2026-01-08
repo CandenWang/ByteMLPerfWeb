@@ -29,23 +29,7 @@ export function HomeHero({ hero }: { hero: Hero }) {
   const slides = hero.slides ?? [];
   const intervalMs = hero.autoplayMs ?? 5000;
   const [active, setActive] = useState(0);
-  const timerRef = useRef<number | null>(null);
-
-  const resetTimer = () => {
-    if (timerRef.current) {
-      window.clearTimeout(timerRef.current);
-    }
-    timerRef.current = window.setTimeout(() => {
-      setActive((prev) => (prev + 1) % slides.length);
-    }, intervalMs);
-  };
-
-  useEffect(() => {
-    resetTimer();
-    return () => {
-      if (timerRef.current) window.clearTimeout(timerRef.current);
-    };
-  }, [active, intervalMs, slides.length]);
+  const [isPaused, setIsPaused] = useState(false);
 
   const onTabClick = (idx: number) => {
     if (idx === active) return;
@@ -54,6 +38,12 @@ export function HomeHero({ hero }: { hero: Hero }) {
 
   return (
     <>
+      <style>{`
+        @keyframes progress-bar {
+          from { transform: scaleX(0); }
+          to { transform: scaleX(1); }
+        }
+      `}</style>
       <div className="relative h-[630px] rounded-[20px] overflow-hidden bg-[linear-gradient(180deg,#f7f9fc_0%,#eef3ff_100%)] m-3 transform-gpu">
         <motion.div
           className="flex h-full will-change-transform"
@@ -79,6 +69,8 @@ export function HomeHero({ hero }: { hero: Hero }) {
                     }
                     transition={{ duration: 0.5, delay: 0.2, ease: 'easeOut' }}
                     className="font-bold text-[36px] text-[var(--rp-c-text-1)]"
+                    onMouseEnter={() => setIsPaused(true)}
+                    onMouseLeave={() => setIsPaused(false)}
                   >
                     <span className="">{slide.name}</span>
                     <span className="font-thin text-[var(--rp-c-text-1)]">
@@ -109,6 +101,8 @@ export function HomeHero({ hero }: { hero: Hero }) {
                     }
                     transition={{ duration: 0.5, delay: 0.4, ease: 'easeOut' }}
                     className="flex gap-3 mt-1.5"
+                    onMouseEnter={() => setIsPaused(true)}
+                    onMouseLeave={() => setIsPaused(false)}
                   >
                     {slide.actions.map((action) => (
                       <Button
@@ -155,14 +149,15 @@ export function HomeHero({ hero }: { hero: Hero }) {
                 </div>
                 <span className="w-full h-[3px] bg-black/10">
                   {i === active && (
-                    <motion.span
+                    <span
                       key={active}
                       className="block h-full bg-[#121212] origin-left"
-                      initial={{ scaleX: 0 }}
-                      animate={{ scaleX: 1 }}
-                      transition={{
-                        duration: intervalMs / 1000,
-                        ease: 'linear',
+                      style={{
+                        animation: `progress-bar ${intervalMs}ms linear forwards`,
+                        animationPlayState: isPaused ? 'paused' : 'running',
+                      }}
+                      onAnimationEnd={() => {
+                        setActive((prev) => (prev + 1) % slides.length);
                       }}
                     />
                   )}
