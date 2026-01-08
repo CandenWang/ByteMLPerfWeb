@@ -1,5 +1,6 @@
 import React from 'react';
 import { Image } from '@arco-design/web-react';
+import { useLang } from 'rspress/runtime';
 
 interface ImageItem {
   src: string;
@@ -22,6 +23,15 @@ interface BlogImageProps {
   layout?: 'row' | 'col';
 }
 
+const locales = {
+  zh: {
+    image: '图片',
+  },
+  en: {
+    image: 'Image',
+  },
+};
+
 const BlogImage: React.FC<BlogImageProps> = ({
   style,
   src,
@@ -30,6 +40,9 @@ const BlogImage: React.FC<BlogImageProps> = ({
   images = [],
   layout = 'row',
 }) => {
+  const lang = useLang();
+  const t = locales[lang === 'zh' ? 'zh' : 'en'];
+
   // Normalize input to array of items
   const items = images.length > 0 ? images : src ? [{ src, alt, caption }] : [];
 
@@ -41,7 +54,7 @@ const BlogImage: React.FC<BlogImageProps> = ({
   const containerClasses =
     items.length > 1
       ? `flex gap-4 w-full justify-center items-start ${
-          layout === 'col' ? 'flex-col items-center' : 'sm:flex-row'
+          layout === 'col' ? 'flex-col items-center' : 'flex-col sm:flex-row'
         }`
       : 'flex justify-center w-full';
 
@@ -62,7 +75,7 @@ const BlogImage: React.FC<BlogImageProps> = ({
         >
           <Image
             src={item.src}
-            alt={item.alt || item.caption || `Image ${index + 1}`}
+            alt={item.alt || item.caption || `${t.image} ${index + 1}`}
             width="100%"
             style={{
               maxWidth: '100%',
@@ -98,9 +111,7 @@ const BlogImage: React.FC<BlogImageProps> = ({
           background-color: white !important;
         }
       `}</style>
-      {/* <Image.PreviewGroup> */}
-      {content}
-      {/* </Image.PreviewGroup> */}
+      <Image.PreviewGroup>{content}</Image.PreviewGroup>
     </div>
   );
 };

@@ -6,6 +6,7 @@
       "@hooks/*": ["./hooks/*"],
       "@components/*": ["./components/*"],
       "@builtIns/*": ["./components/builtIns/*"],
+      "@blog/*": ["./theme/components/Blog/*"],
       "@/assets/*": ["./docs/public/*"],
     }
   },

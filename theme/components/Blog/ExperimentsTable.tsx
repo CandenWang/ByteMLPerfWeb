@@ -1,5 +1,6 @@
 import React from 'react';
 import { Table } from '@arco-design/web-react';
+import { useLang } from 'rspress/runtime';
 
 interface ExperimentRow {
   key: string;
@@ -61,45 +62,65 @@ const data: ExperimentRow[] = [
   },
 ];
 
-const columns = [
-  {
-    title: 'prefill length',
-    dataIndex: 'prefill',
-    render: (col: string) => <div style={{ fontWeight: 'bold' }}>{col}</div>,
+const locales = {
+  zh: {
+    prefillLength: 'prefill 长度',
+    model1Title: '模型 1 仿真 & 实际结果（相对误差）',
+    model2Title: '模型 2 仿真 & 实际结果（相对误差）',
+    simulation: '仿真',
+    real: '实际',
   },
-  {
-    title: 'Model 1 Simulation & Real Results (Relative Error)',
-    children: [
-      {
-        title: 'Simulation',
-        dataIndex: 'model1Sim',
-        className: 'bg-pink',
-      },
-      {
-        title: 'Real',
-        dataIndex: 'model1Real',
-        className: 'bg-blue',
-      },
-    ],
+  en: {
+    prefillLength: 'prefill length',
+    model1Title: 'Model 1 Simulation & Real Results (Relative Error)',
+    model2Title: 'Model 2 Simulation & Real Results (Relative Error)',
+    simulation: 'Simulation',
+    real: 'Real',
   },
-  {
-    title: 'Model 2 Simulation & Real Results (Relative Error)',
-    children: [
-      {
-        title: 'Simulation',
-        dataIndex: 'model2Sim',
-        className: 'bg-pink',
-      },
-      {
-        title: 'Real',
-        dataIndex: 'model2Real',
-        className: 'bg-blue',
-      },
-    ],
-  },
-];
+};
 
 const ExperimentsTable: React.FC = () => {
+  const lang = useLang();
+  const t = locales[lang === 'zh' ? 'zh' : 'en'];
+
+  const columns = [
+    {
+      title: t.prefillLength,
+      dataIndex: 'prefill',
+      render: (col: string) => <div style={{ fontWeight: 'bold' }}>{col}</div>,
+    },
+    {
+      title: t.model1Title,
+      children: [
+        {
+          title: t.simulation,
+          dataIndex: 'model1Sim',
+          className: 'bg-pink',
+        },
+        {
+          title: t.real,
+          dataIndex: 'model1Real',
+          className: 'bg-blue',
+        },
+      ],
+    },
+    {
+      title: t.model2Title,
+      children: [
+        {
+          title: t.simulation,
+          dataIndex: 'model2Sim',
+          className: 'bg-pink',
+        },
+        {
+          title: t.real,
+          dataIndex: 'model2Real',
+          className: 'bg-blue',
+        },
+      ],
+    },
+  ];
+
   return (
     <>
       <style>{`

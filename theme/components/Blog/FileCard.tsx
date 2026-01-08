@@ -2,20 +2,54 @@ import React, { useState, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { Spin, Message } from '@arco-design/web-react';
 import { IconDownload, IconClose, IconFile } from '@arco-design/web-react/icon';
+import { useLang } from 'rspress/runtime';
 
 export interface FileCardProps {
   title: string;
   filePath: string;
+  description?: string;
   fileName?: string;
   displayMode?: 'card' | 'text';
 }
 
+const locales = {
+  zh: {
+    download: '下载',
+    close: '关闭',
+    loadSuccess: '文件加载成功',
+    loadError: '加载文件失败: ',
+    fetchError: '网络错误：无法获取文件。请检查网络连接或跨域设置。',
+    serverError: '服务器错误：无法从服务器获取文件。',
+    emptyPath: '错误：文件路径为空。',
+    downloadStart: (name: string) => `文件 "${name}" 开始下载`,
+    htmlError: '服务器返回了HTML而不是请求的文件。请检查文件路径。',
+  },
+  en: {
+    download: 'Download',
+    close: 'Close',
+    loadSuccess: 'File loaded successfully',
+    loadError: 'Failed to load file: ',
+    fetchError:
+      'Network error: Failed to fetch file. Please check your network connection or CORS settings.',
+    serverError: 'Server error: Failed to fetch file from server.',
+    emptyPath: 'Error: File path is empty.',
+    downloadStart: (name: string) =>
+      `File "${name}" download started successfully`,
+    htmlError:
+      'Server returned HTML instead of the requested file. Please check the file path.',
+  },
+};
+
 const FileCard: React.FC<FileCardProps> = ({
   title,
   filePath,
+  description = '',
   fileName = '',
   displayMode = 'card',
 }) => {
+  const lang = useLang();
+  const t = locales[lang === 'zh' ? 'zh' : 'en'];
+
   const [visible, setVisible] = useState(false);
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
@@ -24,11 +58,16 @@ const FileCard: React.FC<FileCardProps> = ({
   const loadFileContent = async () => {
     setLoading(true);
     try {
+      console.log('Loading file:', filePath);
+
       const response = await fetch(filePath, {
         headers: {
           Accept: '*/*',
         },
       });
+
+      console.log('Response status:', response.status, response.statusText);
+
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Error response content:', errorText.slice(0, 500));
@@ -36,17 +75,25 @@ const FileCard: React.FC<FileCardProps> = ({
           `Failed to load file: ${response.status} ${response.statusText}`
         );
       }
+
       const text = await response.text();
+
       if (
         text.trim().startsWith('<!DOCTYPE') ||
         text.trim().startsWith('<html')
       ) {
-        throw new Error(
-          'Server returned HTML instead of the requested file. Please check the file path.'
-        );
+        console.error('Received HTML instead of expected file content');
+        throw new Error(t.htmlError);
       }
+
       setContent(text);
-    } catch {
+      Message.success(t.loadSuccess);
+    } catch (error) {
+      console.error('Detailed error loading file:', error);
+      Message.error(`${t.loadError}${error.message}`);
+      setContent(
+        `Error loading file: ${error.message}\n\nPlease check the browser console for more details.`
+      );
     } finally {
       setLoading(false);
     }
@@ -100,7 +147,23 @@ const FileCard: React.FC<FileCardProps> = ({
       setTimeout(() => {
         document.body.removeChild(link);
       }, 100);
-    } catch {}
+
+      Message.success(t.downloadStart(downloadFilename));
+    } catch (error) {
+      console.error('Detailed download error:', error);
+      if (
+        error instanceof TypeError &&
+        error.message.includes('Failed to fetch')
+      ) {
+        Message.error(t.fetchError);
+      } else if (error.message.includes('Failed to fetch')) {
+        Message.error(t.serverError);
+      } else if (error.message.includes('File path is empty')) {
+        Message.error(t.emptyPath);
+      } else {
+        Message.error(`${t.loadError}${error.message}`);
+      }
+    }
   };
 
   return (
@@ -142,13 +205,13 @@ const FileCard: React.FC<FileCardProps> = ({
                   onClick={handleDownload}
                   className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm border-none cursor-pointer"
                 >
-                  <IconDownload /> Download
+                  <IconDownload /> {t.download}
                 </button>
                 <button
                   onClick={handleClose}
                   className="flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium text-sm border-none cursor-pointer"
                 >
-                  <IconClose /> Close
+                  <IconClose /> {t.close}
                 </button>
               </div>
             </div>

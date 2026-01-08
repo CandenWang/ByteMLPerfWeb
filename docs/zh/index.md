@@ -18,29 +18,30 @@ hero:
       tabLabel: '评测芯片'
     - name: '芯片评测体系'
       text: '多维度性能画像'
-      chips: ['推理性能', '训练吞吐', '能效比']
+      chips: ['可扩展的千卡训练评估', '基于算子性能的仿真评估']
       actions:
         - text: '查看评测'
           link: '/zh/guide/inference_general_overview'
           theme: 'brand'
       background: 'https://images.unsplash.com/photo-1550751827-4bd374c3f58b?q=80&w=2000&auto=format&fit=crop'
       alt: 'Slide 2'
-      num: 11
+      num: 5
       tabLabel: '开源评测方法论'
     - name: '标准模型评测'
       text: '覆盖主流模型'
-      chips: ['BERT', 'ResNet', 'Whisper']
+      chips:
+        ['单机单卡', '单机8卡', '多机推理', '32卡训练评估', '1024卡训练评估']
       actions:
         - text: '模型列表'
           link: '/zh/guide/inference_llm_overview'
           theme: 'alt'
       background: 'https://images.unsplash.com/photo-1518932945647-7a1c969f8be2?q=80&w=2000&auto=format&fit=crop'
       alt: 'Slide 3'
-      num: 2
+      num: 11
       tabLabel: '任务类型'
     - name: '开源测试框架'
       text: '与生态深度协同'
-      chips: ['PyTorch', 'TensorFlow', 'ONNX Runtime']
+      chips: ['Llama3-8B', 'Qwen', 'Seed-OSS']
       actions:
         - text: '开始集成'
           link: '/zh/guide/quick-start'
@@ -51,7 +52,7 @@ hero:
       tabLabel: '先进模型测评'
     - name: '业务场景评测'
       text: '端到端真实场景'
-      chips: ['搜索', '推荐', '语音助手']
+      chips: ['知识问答类业务', '聊天类业务', '编程类业务']
       actions:
         - text: '查看案例'
           link: '/zh/blog/kubecon'
@@ -78,7 +79,7 @@ articles:
         image: 'https://images.unsplash.com/photo-1550041473-d296a1a8ec52?q=80&w=1000&auto=format&fit=crop'
         link: '/zh/blog/training'
       - title: 'XPU-simulator'
-        desc: '针对不同 AI 硬件架构的深度评测，分析其在不同工作负载下的表现，提供选型建议和优化方向。'
+        desc: '以仿真来代替实测， 实现快速且准确的性能预估， 低成本的芯片评估方案， 无需真实芯片即可知道未来芯片部署后的性能'
         image: 'https://images.unsplash.com/photo-1591453089816-0fbb971b454c?q=80&w=1000&auto=format&fit=crop'
         link: '/zh/blog/simulator'
   # - title: '研究亮点'

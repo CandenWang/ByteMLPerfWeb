@@ -1,0 +1,1360 @@
+import ParamCompareTable from '@blog/tables/ParamCompareTable';
+import NonlinearSfuTable from '@blog/tables/NonlinearSfuTable';
+import FAAccuracyTable from '@blog/tables/FAAccuracyTable';
+import MatmulAccuracyTable from '@blog/tables/MatmulAccuracyTable';
+import AllReduceAccuracyTable from '@blog/tables/AllReduceAccuracyTable';
+import MultiStreamCapabilityTable from '@blog/tables/MultiStreamCapabilityTable';
+import MultiStreamDetailTable from '@blog/tables/MultiStreamDetailTable';
+import DeterminismTable from '@blog/tables/DeterminismTable';
+import FsdpAccuracyTable from '@blog/tables/FsdpAccuracyTable';
+import MemoryStabilityTable from '@blog/tables/MemoryStabilityTable';
+import MemoryFragmentationTable from '@blog/tables/MemoryFragmentationTable';
+import GpuMluLossCompareTable from '@blog/tables/GpuMluLossCompareTable';
+import TrainingConfigTable from '@blog/tables/TrainingConfigTable';
+import LossAnalysis240Table from '@blog/tables/LossAnalysis240Table';
+import FileCard from '@blog/FileCard';
+import WaveLossAnalysisTable from '@blog/tables/WaveLossAnalysisTable';
+import { Helmet } from 'rspress/runtime';
+
+# [HWJ Discussion] MLU-590D Training Evaluation Report
+
+## Summary{/* Title Sequence: 1 */}
+
+:::info TL,DR
+
+<div>
+- **Accuracy Test**: Operator Accuracy: The precision of non-linear instructions, Flash Attention forward and backward pass on Cambricon 590D chip is comparable to GPU, meeting expectations. Model Accuracy: For 16-card and 32-card training on 21B and 24B models, the loss precision meets expectations. The average error over 50 steps compared to H800 is less than 0.2%. For 66B model training on 240 cards, the training accuracy for the first 1000 steps meets expectations, with an average error of about 0.2%.
+- **Determinism Test**: Operator determinism for operators such as rand, dropout, FA forward/backward, and all-reduce can be reproduced multiple times with bit-level alignment.
+- **Memory Management**: MLU memory usage is stable and slightly lower than GPU (< 0.2%). By designing variable-length input sequences, MLU's fragmentation handling capability is also comparable to GPU.
+- **Model Performance**
+- **Potential Risks**: There is a gap in parameter size between the current model and the final M8 model (66B vs. 140B, etc.). The training scale has not yet reached the thousand-card level, and model performance and accuracy still need to be verified with business models.
+- **Follow-up**:
+1. Adaptation of XPU-speed.
+2. 1000-card training resources: 1) Borrow 1000 cards from Ye Lu for verification, 2) Conduct thousand-card verification during the grayscale period.
+3. GPU baseline alignment to prove no accuracy issues.
+    1. Determine the card count and baseline for GPU baseline.
+</div>
+:::
+
+## Parameter Comparison{/* Title Sequence: 2 */}
+
+<ParamCompareTable />
+
+## Training Operator Accuracy Test{/* Title Sequence: 3 */}
+
+### Non-linear Instruction Test{/* Title Sequence: 3.1 */}
+
+<NonlinearSfuTable />
+
+```python
+import torch
+import torch_mlu
+import numpy as np
+
+import matplotlib.pyplot as plt
+
+np.random.seed(1)
+
+function_names = {
+"cos":   lambda x : torch.cos(x),
+"sin":   lambda x : torch.sin(x),
+"exp":   lambda x : torch.exp(x),
+"gelu":  lambda x : torch.nn.functional.gelu(x),
+"log": lambda x : torch.log(x),
+"silu": lambda x: torch.nn.functional.silu(x),
+"sqrt": lambda x : torch.sqrt(x),
+"div": lambda x : torch.div(x,3),
+}
+
+def max_diff(name, custom, real):
+    real = real.reshape(-1)
+    custom = custom.reshape(-1)
+    max_index = torch.argmax(torch.abs(real - custom)/(custom+1e-10)).item()
+    real_val = real[max_index].item()
+    custom_val = custom[max_index].item()
+    print(f"  {name}" + "max diff", abs(real_val - custom_val), "relative diff", abs(real_val - custom_val)/(real_val+1e-10), "index@", max_index, "real: ", real_val, "custom: ", custom_val)
+    #return abs(real_val - custom_val)
+    relative_diff = abs(real - custom)/(real_val+1e-16)
+    return relative_diff
+
+#input_np = np.random.random((4096)).astype(np.float32)*10
+input_np = numbers = np.arange(0.001, 1.001, 0.01)
+input = torch.tensor(input_np, dtype=torch.float32).mlu()
+results = {}
+golden_results = {}
+relative_diff = {}
+
+for name in function_names.keys():
+    results[name] = []
+    golden_results[name] = []
+    relative_diff[name] = []
+
+    func = function_names[name]
+    if func is not None:
+        npu_res = func(input)
+    else:
+        print(f"Function {name} does not exist in PyTorch.")
+    results[name].append(npu_res)
+    cpu_input = input.cpu().double()
+    cpu_res = func(cpu_input)
+    golden_results[name].append(cpu_res)
+    relative = max_diff(f"MLU Func {name}: ", npu_res.cpu().double(), cpu_res)
+    relative_diff[name].append(relative)
+
+plt.figure(figsize=(10, 6))
+
+# Plot each list
+for key, values in relative_diff.items():
+    plt.plot(input_np, values[0], label=key)
+
+    # Add title and labels
+    plt.title(key)
+    plt.xlabel('Inpu X [0,1]')
+    plt.ylabel('Relative Difference ')
+    plt.legend()
+    plt.grid()
+    name = key + '_plot.png'
+    plt.savefig(name, dpi=300)  # Can specify filename and resolution
+    plt.close()
+```
+
+## FA Operator Accuracy{/* Title Sequence: 3.2 */}
+
+<div>
+**Test Plan**:
+1. Compare accuracy using real training data as input
+	- Use online real tensor for comparison, accuracy error uses absolute error
+	- Comparing the results with CPU errors, the maximum error of backward DQ, DK, DV is maintained in the range of 1e-8~1e-6, and the average error is maintained in the range of 1e-9~1e-11, which is comparable to the NPU FA accuracy tested by the operator team. [NPU FlashAttention Accuracy benchmark](https://bytedance.larkoffice.com/docx/YqD7dFQQwory3wxkKZ4cX9Adnue?from=from_copylink)
+2. Use community open source solution with normal distribution 0,1 as input for comparison. **Test Code**: Open source FA, compare with flash-attn-2.8.0.post2
+**Test Result FA Forward**: CPU (fp32) v.s. GPU (bf16) output mean error is less than 1e-4, max error < 0.02
+**Test Result FA Backward**: CPU (fp32) v.s. GPU(bf16) dQ, dK, dV mean error is less than 1e-4, max error < 0.04, meeting expectations, comparable to xperf (CPU v.s GPU) operator accuracy tested by operator team [[ref](https://bytedance.larkoffice.com/docx/YqD7dFQQwory3wxkKZ4cX9Adnue?from=from_copylink)].
+</div>
+
+**Real Data CPU reference code:**
+
+This part of data and code aligns with this document.
+
+[NPU FlashAttention Accuracy benchmark](https://bytedance.larkoffice.com/docx/YqD7dFQQwory3wxkKZ4cX9Adnue?from=from_copylink)
+
+<FAAccuracyTable />
+
+CPU Reference Code:
+
+```python
+def tsoftmax(x):
+    x_max = torch.max(x, dim=-1, keepdims=True)[0]
+    x_sub = x.sub(x_max)
+    y = torch.exp(x_sub)
+    x_sum = y.sum(dim=-1, keepdims=True)
+    ans = y.div(x_sum)
+    return ans, x_max, x_sum
+
+def tsoftmax_grad(dp, softmax_res):
+    muls = dp * softmax_res
+    muls_r = muls.sum(dim=-1, keepdims=True)
+    sub_r = dp - muls_r
+    res = sub_r * softmax_res
+    return res
+
+def tforward(q, k, v, drop_mask, atten_mask, scale, keep_prob):
+    qk = (torch.matmul(q, k.permute(0, 1, 3, 2))).mul(scale)
+    qk = qk + atten_mask.bool() * (-40000.0)
+    softmax_res, x_max, x_sum = tsoftmax(qk)
+    drop_res = softmax_res * drop_mask * (1.0 / (keep_prob))
+    y = torch.matmul(drop_res, v)
+    return y, softmax_res, x_max, x_sum
+
+def tbackward(dx, q, k, v, softmax_res, drop_mask, scale, keep_prob):
+    drop_res = softmax_res.mul(drop_mask).mul(1.0 / (keep_prob)).permute(0, 1, 3, 2)
+    dv = torch.matmul(drop_res, dx)
+    dp = torch.matmul(dx, v.permute(0, 1, 3, 2))
+    dp_drop = dp * drop_mask * (1.0 / (keep_prob))
+    softmax_grad_res = (tsoftmax_grad(dp_drop, softmax_res) * scale)
+    dq = torch.matmul(softmax_grad_res, k)
+    dk = torch.matmul(softmax_grad_res.permute(0, 1, 3, 2), q)
+    return dq, dk, dv
+
+def broadcastKV_sigle(numHeads, numKeyValueHeads, kv_tensor, dtype):
+    factor = numHeads // numKeyValueHeads
+    kv_shape = kv_tensor.shape
+    B = kv_shape[0]
+    S = kv_shape[2]
+    D = kv_shape[3]
+    kv_res = torch.zeros([B, numHeads, S, D]).to(dtype)
+    for i in range(numHeads):
+        j = i // factor
+        kv_res[:, i:i + 1, :, :] = kv_tensor[:, j:j + 1, :, :]
+    return kv_res
+
+def fa_ref(query, key, value, dout, cu_seq_lens_q, cu_seq_lens_kv):
+        B = len(cu_seq_lens_q) - 1
+        out_golden = torch.zeros_like(query)
+        dq_golden = torch.zeros_like(query)
+        dk_golden = torch.zeros_like(key)
+        dv_golden = torch.zeros_like(value)
+        x_max = torch.empty(0)
+        x_sum = torch.empty(0)
+
+        cu_seqlens_q = cu_seq_lens_q
+        cu_seqlens_k = cu_seq_lens_kv
+
+        seqlens_list_q = cu_seq_lens_q[1:] - cu_seq_lens_q[:-1]
+        seqlens_list_k = cu_seq_lens_kv[1:] - cu_seq_lens_kv[:-1]
+
+        N1 = query.shape[1]
+        N2 = key.shape[1]
+
+        headDim = query.shape[2]
+
+        S1 = seqlens_list_q.max()
+        S2 = seqlens_list_k.max()
+        shape = [S1, S2]
+        atten_mask = (torch.triu(torch.ones(shape), diagonal=1)).to(torch.bool)
+
+        drop_mask = torch.tensor(1)
+
+        scale = 1 / (headDim ** 0.5)
+
+        for i in range(B):
+            qi = query[cu_seqlens_q[i]:cu_seqlens_q[i+1]]
+            ki = key[cu_seqlens_k[i]:cu_seqlens_k[i+1]]
+            vi = value[cu_seqlens_k[i]:cu_seqlens_k[i+1]]
+
+            qi = rearrange(qi, 's n d -> 1 n s d')
+            ki = rearrange(ki, 's n d -> 1 n s d')
+            vi = rearrange(vi, 's n d -> 1 n s d')
+
+            if not (N1 == N2):
+                ki = broadcastKV_sigle(N1, N2, ki, ki.dtype)
+                vi = broadcastKV_sigle(N1, N2, vi, vi.dtype)
+
+            atten_maski = atten_mask[:seqlens_list_q[i], :seqlens_list_k[i]]
+
+            drop_maski = drop_mask
+
+            gtype = torch.float32
+
+            # Forward golden calculation
+            outi_golden, softmax_resi, x_maxi, x_sumi = tforward(qi.to(gtype), ki.to(gtype), vi.to(gtype),
+                                            drop_maski, atten_maski, scale, 1.0)
+            out_golden[cu_seqlens_q[i]:cu_seqlens_q[i+1]] = rearrange(outi_golden, '1 n s d -> s n d')
+
+            x_maxi = x_maxi.broadcast_to(1, N1, seqlens_list_q[i], 8)
+            x_maxi = x_maxi.contiguous().view(-1)
+            x_sumi = x_sumi.broadcast_to(1, N1, seqlens_list_q[i], 8)
+            x_sumi = x_sumi.contiguous().view(-1)
+            x_max = torch.cat([x_max,x_maxi],dim=0)
+            x_sum = torch.cat([x_sum,x_sumi],dim=0)
+
+            dxi = dout[cu_seqlens_q[i]:cu_seqlens_q[i+1]]
+            dxi = rearrange(dxi, 's n d -> 1 n s d')
+            dqi_golden, dki_golden, dvi_golden = tbackward(dxi.to(gtype), qi.to(gtype), ki.to(gtype),
+                                                        vi.to(gtype), softmax_resi.to(gtype),
+                                                        drop_maski.to(gtype), scale, 1.0)
+
+            if not (N1 == N2):
+                G = int(N1 / N2)
+                s2i = seqlens_list_k[i]
+                dki_golden = torch.sum(dki_golden.reshape(1, N2, G, s2i, headDim), dim=2, keepdim=True).reshape(1, N2, s2i, headDim)
+                dvi_golden = torch.sum(dvi_golden.reshape(1, N2, G, s2i, headDim), dim=2, keepdim=True).reshape(1, N2, s2i, headDim)
+
+            dq_golden[cu_seqlens_q[i]:cu_seqlens_q[i+1]] = rearrange(dqi_golden, '1 n s d -> s n d')
+            dk_golden[cu_seqlens_k[i]:cu_seqlens_k[i+1]] = rearrange(dki_golden, '1 n s d -> s n d')
+            dv_golden[cu_seqlens_k[i]:cu_seqlens_k[i+1]] = rearrange(dvi_golden, '1 n s d -> s n d')
+
+        return out_golden.cpu(), dq_golden.cpu(), dk_golden.cpu(), dv_golden.cpu()
+```
+
+**Community Test Plan Code:**
+
+Verification needed in flash attention environment, https://github.com/Dao-AILab/flash-attention/tree/main/tests
+
+Forward Test Accuracy
+
+<FileCard
+  title="/blog/data/未命名表格_Q4UmWC.xlsx"
+  filePath="/blog/data/未命名表格_Q4UmWC.xlsx"
+/>
+
+Backward Test Accuracy
+
+<FileCard
+  title="/blog/data/未命名表格_a60nac.xlsx"
+  filePath="/blog/data/未命名表格_a60nac.xlsx"
+/>
+
+Test_FA Forward
+
+````python
+import math
+
+import pytest
+import torch
+import torch.nn.functional as F
+from einops import rearrange, repeat
+from flash_attn import (
+    flash_attn_func,
+    flash_attn_kvpacked_func,
+    flash_attn_qkvpacked_func,
+    flash_attn_varlen_func,
+    flash_attn_varlen_kvpacked_func,
+    flash_attn_varlen_qkvpacked_func,
+    flash_attn_with_kvcache,
+)
+
+from test_flash_attn import (
+    attn_bias_from_alibi_slopes,
+    convert_flash_attn_S_to_softmax,
+    generate_qkv,
+    generate_random_padding_mask,
+    _generate_block_kvcache,
+    attention_ref,
+    attention_kvpacked_ref,
+    attention_qkvpacked_ref,
+)
+
+from flash_attn.layers.rotary import apply_rotary_emb
+
+def is_bwd_hdim_supported(d):
+    return d <= 256
+
+def ck_randval_to_dropout_mask(randval, p):
+    # If p = 0.3, randval in 255 * (0.7, 1.0] will be dropout
+    # randval in 255 * [0, 0.7] will be kept
+    # If return dropout_mask >=0, value will be kept
+    return math.floor(255.0 * (1 - p)) - randval.to(torch.float32)
+
+def pad_rearrange_dropout_mask_hts_to_bhss(S_dmask, cu_seqlens_q, seqlen_q_rounded, seqlen_k_rounded):
+    """ pad + rearrange [nheads, total_q, max_seqlen_k] into [b, nheads, seqlen_q_rounded, seqlen_k_rounded]
+    Arguments:
+        S_dmask: (nheads, total_q, max_seqlen_k)
+        cu_seqlens_q: (b + 1)
+    Output:
+        S_dmask: (b, nheads, seqlen_q_rounded, seqlen_k_rounded)
+    """
+    batch_size = cu_seqlens_q.numel() - 1
+    seqlens_q = torch.roll(cu_seqlens_q, shifts = -1) - cu_seqlens_q
+    seqlens_q = seqlens_q[0:batch_size].tolist()
+    S_dmask = torch.split(S_dmask, seqlens_q, dim=1)
+    # [(nheads, seqlen_q0, max_seqlen_k), (nheads, seqlen_q1, max_seqlen_k), ..., (nheads, seqlen_qb, max_seqlen_k)]
+    masks = ()
+    for mask in S_dmask:
+        # (nheads, seqlen_qi, max_seqlen_k) -> (nheads, seqlen_q_rounded, seqlen_k_rounded)
+        mask = F.pad(mask, (0, seqlen_k_rounded - mask.shape[2], 0, seqlen_q_rounded - mask.shape[1], 0, 0)).unsqueeze(1)
+        masks = masks + (mask, )
+    S_dmask = torch.cat(masks, dim=1)
+
+    S_dmask = S_dmask.transpose(0, 1)
+    return S_dmask
+
+@pytest.mark.parametrize("kvpacked", [False])
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+@pytest.mark.parametrize("deterministic", [False])
+@pytest.mark.parametrize("alibi", [False])
+@pytest.mark.parametrize("local", [False])
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("d", [ 128])
+@pytest.mark.parametrize(
+    "seqlen_q,seqlen_k",
+    [
+        (1024, 1024),
+        (2048, 2048),
+        (4096, 4096),
+        (8192, 8192),
+    ],
+)
+@pytest.mark.parametrize("dropout_p", [0.0])
+def test_flash_attn_output(
+    seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked
+):
+    device = "cuda"
+    # set seed
+    torch.random.manual_seed(0)
+    batch_size = 4
+    nheads = 9
+    nheads_k = nheads if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
+    assert nheads % nheads_k == 0
+    window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
+    q = torch.randn(batch_size, seqlen_q, nheads, d, device=device, dtype=dtype, requires_grad=True)
+    if kvpacked:
+        kv = torch.randn(
+            batch_size, seqlen_k, 2, nheads_k, d, device=device, dtype=dtype, requires_grad=True
+        )
+    else:
+        k = torch.randn(
+            batch_size, seqlen_k, nheads_k, d, device=device, dtype=dtype, requires_grad=True
+        )
+        v = torch.randn(
+            batch_size, seqlen_k, nheads_k, d, device=device, dtype=dtype, requires_grad=True
+        )
+    if alibi:
+        alibi_slopes = torch.rand(batch_size, nheads, device=device, dtype=torch.float32) * 0.3
+        attn_bias = attn_bias_from_alibi_slopes(alibi_slopes, seqlen_q, seqlen_k, causal=causal)
+    else:
+        alibi_slopes, attn_bias = None, None
+
+    if kvpacked:
+        out, lse, S_dmask = flash_attn_kvpacked_func(
+            q,
+            kv,
+            dropout_p,
+            causal=causal,
+            window_size=window_size,
+            alibi_slopes=alibi_slopes,
+            deterministic=deterministic,
+            return_attn_probs=True,
+        )
+    else:
+        out, lse, S_dmask = flash_attn_func(
+            q,
+            k,
+            v,
+            dropout_p,
+            causal=causal,
+            window_size=window_size,
+            alibi_slopes=alibi_slopes,
+            deterministic=deterministic,
+            return_attn_probs=True,
+        )
+    if dropout_p > 0.0:
+        # TODO - move to c++ mha_varlen_fwd()
+        S_dmask = ck_randval_to_dropout_mask(S_dmask, dropout_p)
+        S_dmask_converted = convert_flash_attn_S_to_softmax(
+            S_dmask,
+            seqlen_q,
+            seqlen_k,
+            None,
+            None,
+            d,
+            dropout_p > 0.0,
+            causal=causal,
+            window_size=window_size,
+        )
+        dropout_mask = S_dmask_converted >= 0
+        if kvpacked:
+            kv_rep = repeat(kv, "b s two h d -> b s two (h g) d", g=nheads // nheads_k)
+            k_rep, v_rep = kv_rep.unbind(dim=2)
+        else:
+            k_rep = repeat(k, "b s h d -> b s (h g) d", g=nheads // nheads_k)
+            v_rep = repeat(v, "b s h d -> b s (h g) d", g=nheads // nheads_k)
+        # CK does not return P. Hence, we don't test the attn here.
+    else:
+        dropout_mask = None
+
+    if kvpacked:
+        out_ref, attn_ref = attention_kvpacked_ref(
+            q,
+            kv,
+            None,
+            None,
+            attn_bias,
+            dropout_p,
+            dropout_mask,
+            causal=causal,
+            window_size=window_size,
+        )
+        out_pt, attn_pt = attention_kvpacked_ref(
+            q,
+            kv,
+            None,
+            None,
+            attn_bias,
+            dropout_p,
+            dropout_mask,
+            causal=causal,
+            window_size=window_size,
+            upcast=False,
+            reorder_ops=True,
+        )
+    else:
+        out_ref, attn_ref = attention_ref(
+            q,
+            k,
+            v,
+            None,
+            None,
+            attn_bias,
+            dropout_p,
+            dropout_mask,
+            causal=causal,
+            window_size=window_size,
+        )
+        out_pt, attn_pt = attention_ref(
+            q,
+            k,
+            v,
+            None,
+            None,
+            attn_bias,
+            dropout_p,
+            dropout_mask,
+            causal=causal,
+            window_size=window_size,
+            upcast=False,
+            reorder_ops=True,
+        )
+
+    print(f" seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacke, Output max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, (out - out_ref).abs().max().item()}")
+    print(f" seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacke, Output mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, (out - out_ref).abs().mean().item()}")
+    print(f" seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacke, Pytorch max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, (out_pt - out_ref).abs().max().item()}")
+    print(f" seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacke, Pytorch mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, (out_pt - out_ref).abs().mean().item()}")
+
+    # Check that FlashAttention's numerical error is at most twice the numerical error
+    # of a Pytorch implementation.
+    # assert (out - out_ref).abs().max().item() <= 2 * (out_pt - out_ref).abs().max().item()
+
+    # g = torch.randn_like(out)
+    # if is_bwd_hdim_supported(d):
+    #     if kvpacked:
+    #         (
+    #             dq,
+    #             dkv,
+    #         ) = torch.autograd.grad(out, (q, kv), g)
+    #         dk, dv = dkv.unbind(2)
+    #         (
+    #             dq_ref,
+    #             dkv_ref,
+    #         ) = torch.autograd.grad(out_ref, (q, kv), g)
+    #         dk_ref, dv_ref = dkv_ref.unbind(2)
+    #         (
+    #             dq_pt,
+    #             dkv_pt,
+    #         ) = torch.autograd.grad(out_pt, (q, kv), g)
+    #         dk_pt, dv_pt = dkv_pt.unbind(2)
+    #     else:
+    #         (
+    #             dq,
+    #             dk,
+    #             dv,
+    #         ) = torch.autograd.grad(out, (q, k, v), g)
+    #         (
+    #             dq_ref,
+    #             dk_ref,
+    #             dv_ref,
+    #         ) = torch.autograd.grad(out_ref, (q, k, v), g)
+    #         (
+    #             dq_pt,
+    #             dk_pt,
+    #             dv_pt,
+    #         ) = torch.autograd.grad(out_pt, (q, k, v), g)
+    #     print(f"dK max diff: {(dk - dk_ref).abs().max().item()}")
+    #     print(f"dV max diff: {(dv - dv_ref).abs().max().item()}")
+    #     print(f"dQ mean diff: {(dq - dq_ref).abs().mean().item()}")
+    #     print(f"dK mean diff: {(dk - dk_ref).abs().mean().item()}")
+    #     print(f"dV mean diff: {(dv - dv_ref).abs().mean().item()}")
+    #     print(f"dQ Pytorch max diff: {(dq_pt - dq_ref).abs().max().item()}")
+    #     print(f"dK Pytorch max diff: {(dk_pt - dk_ref).abs().max().item()}")
+    #     print(f"dV Pytorch max diff: {(dv_pt - dv_ref).abs().max().item()}")
+    #     print(f"dQ Pytorch mean diff: {(dq_pt - dq_ref).abs().mean().item()}")
+    #     print(f"dK Pytorch mean diff: {(dk_pt - dk_ref).abs().mean().item()}")
+    #    print(f"dV Pytorch mean diff: {(dv_pt - dv_ref).abs().mean().item()}")
+
+        # # TODO - use 10 times to check, wait for ck to fix bwd precision issue
+        # assert (dq - dq_ref).abs().max().item() <= 10 * (dq_pt - dq_ref).abs().max().item()
+        # assert (dk - dk_ref).abs().max().item() <= 10 * (dk_pt - dk_ref).abs().max().item()
+        # assert (dv - dv_ref).abs().max().item() <= 10 * (dv_pt - dv_ref).abs().max().item()
+
+# @pytest.mark.parametrize("kvpacked", [False])
+# @pytest.mark.parametrize("dtype", [torch.bfloat16])
+# @pytest.mark.parametrize("mha_type", ["mha", "mqa", "gqa"])
+# @pytest.mark.parametrize("deterministic", [False, True])
+# @pytest.mark.parametrize("alibi", [False, True])
+# @pytest.mark.parametrize("local", [False, True])
+# @pytest.mark.parametrize("causal", [False, True])
+# @pytest.mark.parametrize("d", [ 64, 128])
+# @pytest.mark.parametrize(
+#     "seqlen_q,seqlen_k",
+#     [
+#         (1024, 1024),
+#         (2048, 2048),
+#         (4096, 4096),
+#         (8192, 8192),
+#     ],
+# )
+# @pytest.mark.parametrize("dropout_p", [0.0])
+# def test_flash_attn_varlen_output(
+#     seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked
+# ):
+#     device = "cuda"
+#     # set seed
+#     torch.random.manual_seed(0)
+#     batch_size = 4
+#     nheads = 9
+#     nheads_k = nheads if mha_type == "mha" else (1 if mha_type == "mqa" else 3)
+#     assert nheads % nheads_k == 0
+#     window_size = (-1, -1) if not local else torch.randint(0, seqlen_k, (2,))
+#     q = torch.randn(batch_size, seqlen_q, nheads, d, device=device, dtype=dtype, requires_grad=True)
+#     if kvpacked:
+#         kv = torch.randn(
+#             batch_size, seqlen_k, 2, nheads_k, d, device=device, dtype=dtype, requires_grad=True
+#         )
+#     else:
+#         k = torch.randn(
+#             batch_size, seqlen_k, nheads_k, d, device=device, dtype=dtype, requires_grad=True
+#         )
+#         v = torch.randn(
+#             batch_size, seqlen_k, nheads_k, d, device=device, dtype=dtype, requires_grad=True
+#         )
+#
+#     query_padding_mask = generate_random_padding_mask(seqlen_q, batch_size, device, mode="random")
+#     key_padding_mask = generate_random_padding_mask(seqlen_k, batch_size, device, mode="random")
+#     # key_padding_mask = generate_random_padding_mask(seqlen_k, batch_size, device, mode='full')
+#     if alibi:
+#         alibi_slopes = torch.rand(batch_size, nheads, device=device, dtype=torch.float32) * 0.3
+#         attn_bias = attn_bias_from_alibi_slopes(
+#             alibi_slopes, seqlen_q, seqlen_k, query_padding_mask, key_padding_mask, causal=causal
+#         )
+#     else:
+#         alibi_slopes, attn_bias = None, None
+#
+#     if kvpacked:
+#         (
+#             q_unpad,
+#             kv_unpad,
+#             cu_seqlens_q,
+#             cu_seqlens_k,
+#             max_seqlen_q,
+#             max_seqlen_k,
+#             q,
+#             kv,
+#             output_pad_fn,
+#             dq_pad_fn,
+#             dkv_pad_fn,
+#         ) = generate_qkv(q, *kv.unbind(dim=2), query_padding_mask, key_padding_mask, kvpacked=True)
+#         out_unpad, sm_lse, S_dmask = flash_attn_varlen_kvpacked_func(
+#             q_unpad,
+#             kv_unpad,
+#             cu_seqlens_q,
+#             cu_seqlens_k,
+#             max_seqlen_q,
+#             max_seqlen_k,
+#             dropout_p,
+#             causal=causal,
+#             window_size=window_size,
+#             alibi_slopes=alibi_slopes,
+#             deterministic=deterministic,
+#             return_attn_probs=True,
+#         )
+#     else:
+#         (
+#             q_unpad,
+#             k_unpad,
+#             v_unpad,
+#             cu_seqlens_q,
+#             cu_seqlens_k,
+#             max_seqlen_q,
+#             max_seqlen_k,
+#             q,
+#             k,
+#             v,
+#             output_pad_fn,
+#             dq_pad_fn,
+#             dk_pad_fn,
+#         ) = generate_qkv(q, k, v, query_padding_mask, key_padding_mask, kvpacked=False)
+#         out_unpad, sm_lse, S_dmask = flash_attn_varlen_func(
+#             q_unpad,
+#             k_unpad,
+#             v_unpad,
+#             cu_seqlens_q,
+#             cu_seqlens_k,
+#             max_seqlen_q,
+#             max_seqlen_k,
+#             dropout_p,
+#             causal=causal,
+#             window_size=window_size,
+#             alibi_slopes=alibi_slopes,
+#             deterministic=deterministic,
+#             return_attn_probs=True,
+#         )
+#     out = output_pad_fn(out_unpad)
+#     if dropout_p > 0.0:
+#         # TODO - move to c++ mha_varlen_fwd()
+#         S_dmask = ck_randval_to_dropout_mask(S_dmask, dropout_p)
+#         S_dmask = pad_rearrange_dropout_mask_hts_to_bhss(S_dmask, cu_seqlens_q, seqlen_q, seqlen_k)
+#         S_dmask_converted = convert_flash_attn_S_to_softmax(
+#             S_dmask,
+#             seqlen_q,
+#             seqlen_k,
+#             query_padding_mask,
+#             key_padding_mask,
+#             d,
+#             dropout_p > 0.0,
+#             causal=causal,
+#             window_size=window_size,
+#         )
+#         dropout_mask = S_dmask_converted >= 0
+#         if kvpacked:
+#             kv_rep = repeat(kv, "b s two h d -> b s two (h g) d", g=nheads // nheads_k)
+#             k_rep, v_rep = kv_rep.unbind(dim=2)
+#         else:
+#             k_rep = repeat(k, "b s h d -> b s (h g) d", g=nheads // nheads_k)
+#             v_rep = repeat(v, "b s h d -> b s (h g) d", g=nheads // nheads_k)
+#         # CK does not return P. Hence, we don't test the attn here.
+#     else:
+#         dropout_mask = None
+#
+#     if kvpacked:
+#         out_ref, attn_ref = attention_kvpacked_ref(
+#             q,
+#             kv,
+#             query_padding_mask,
+#             key_padding_mask,
+#             attn_bias,
+#             dropout_p,
+#             dropout_mask,
+#             causal=causal,
+#             window_size=window_size,
+#         )
+#         out_pt, attn_pt = attention_kvpacked_ref(
+#             q,
+#             kv,
+#             query_padding_mask,
+#             key_padding_mask,
+#             attn_bias,
+#             dropout_p,
+#             dropout_mask,
+#             causal=causal,
+#             window_size=window_size,
+#             upcast=False,
+#             reorder_ops=True,
+#         )
+#     else:
+#         out_ref, attn_ref = attention_ref(
+#             q,
+#             k,
+#             v,
+#             query_padding_mask,
+#             key_padding_mask,
+#             attn_bias,
+#             dropout_p,
+#             dropout_mask,
+#             causal=causal,
+#             window_size=window_size,
+#         )
+#         out_pt, attn_pt = attention_ref(
+#             q,
+#             k,
+#             v,
+#             query_padding_mask,
+#             key_padding_mask,
+#             attn_bias,
+#             dropout_p,
+#             dropout_mask,
+#             causal=causal,
+#             window_size=window_size,
+#             upcast=False,
+#             reorder_ops=True,
+#         )
+#
+#     print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, Output max diff: { seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked,(out - out_ref).abs().max().item()}")
+#     print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, Output mean diff: { seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked,(out - out_ref).abs().mean().item()}")
+#     print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, Pytorch max diff: { seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked,(out_pt - out_ref).abs().max().item()}")
+#     print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, Pytorch mean diff: { seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, (out_pt - out_ref).abs().mean().item()}")
+#
+#     # Check that FlashAttention's numerical error is at most 4 times the numerical error
+#     # of a Pytorch implementation.
+#     #assert (out - out_ref).abs().max().item() <= 4 * (out_pt - out_ref).abs().max().item()
+#
+#     g = torch.randn_like(out)
+#     if is_bwd_hdim_supported(d):
+#         if kvpacked:
+#             (
+#                 dq_unpad,
+#                 dkv_unpad,
+#             ) = torch.autograd.grad(out, (q_unpad, kv_unpad), g)
+#             dk, dv = dkv_pad_fn(dkv_unpad).unbind(2)
+#             (
+#                 dq_ref,
+#                 dkv_ref,
+#             ) = torch.autograd.grad(out_ref, (q, kv), g)
+#             dk_ref, dv_ref = dkv_ref.unbind(2)
+#             (
+#                 dq_pt,
+#                 dkv_pt,
+#             ) = torch.autograd.grad(out_pt, (q, kv), g)
+#             dk_pt, dv_pt = dkv_pt.unbind(2)
+#         else:
+#             (
+#                 dq_unpad,
+#                 dk_unpad,
+#                 dv_unpad,
+#             ) = torch.autograd.grad(out, (q_unpad, k_unpad, v_unpad), g)
+#             dk = dk_pad_fn(dk_unpad)
+#             dv = dk_pad_fn(dv_unpad)
+#             (
+#                 dq_ref,
+#                 dk_ref,
+#                 dv_ref,
+#             ) = torch.autograd.grad(out_ref, (q, k, v), g)
+#             (
+#                 dq_pt,
+#                 dk_pt,
+#                 dv_pt,
+#             ) = torch.autograd.grad(out_pt, (q, k, v), g)
+#         dq = dq_pad_fn(dq_unpad)
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dQ max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dq - dq_ref).abs().max().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dK max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dk - dk_ref).abs().max().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dV max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dv - dv_ref).abs().max().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dQ mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dq - dq_ref).abs().mean().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dK mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dk - dk_ref).abs().mean().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dV mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dv - dv_ref).abs().mean().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dQ Pytorch max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dq_pt - dq_ref).abs().max().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dK Pytorch max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dk_pt - dk_ref).abs().max().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dV Pytorch max diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dv_pt - dv_ref).abs().max().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dQ Pytorch mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dq_pt - dq_ref).abs().mean().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dK Pytorch mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dk_pt - dk_ref).abs().mean().item()}")
+#         print(f"seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked, dV Pytorch mean diff: {seqlen_q, seqlen_k, d, dropout_p, causal, local, alibi, deterministic, mha_type, dtype, kvpacked(dv_pt - dv_ref).abs().mean().item()}")
+# ```
+
+Test_FA Backward
+
+```python
+import math
+
+import pytest
+import torch
+import torch.nn.functional as F
+from einops import rearrange, repeat
+from flash_attn import (
+    flash_attn_func,
+    flash_attn_kvpacked_func,
+    flash_attn_qkvpacked_func,
+    flash_attn_varlen_func,
+    flash_attn_varlen_kvpacked_func,
+    flash_attn_varlen_qkvpacked_func,
+    flash_attn_with_kvcache,
+)
+
+from test_flash_attn import (
+    attn_bias_from_alibi_slopes,
+    convert_flash_attn_S_to_softmax,
+    generate_qkv,
+    generate_random_padding_mask,
+    _generate_block_kvcache,
+    attention_ref,
+    attention_kvpacked_ref,
+    attention_qkvpacked_ref,
+)
+
+from flash_attn.layers.rotary import apply_rotary_emb
+
+def is_bwd_hdim_supported(d):
+    return d <= 256
+
+def ck_randval_to_dropout_mask(randval, p):
+    # If p = 0.3, randval in 255 * (0.7, 1.0] will be dropout
+    # randval in 255 * [0, 0.7] will be kept
+    # If return dropout_mask >=0, value will be kept
+    return math.floor(255.0 * (1 - p)) - randval.to(torch.float32)
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16])
+@pytest.mark.parametrize("causal", [False, True])
+@pytest.mark.parametrize("d", [64, 128])
+@pytest.mark.parametrize("seqlen", [2048, 4096, 8192])
+def test_flash_attn_bwd_transpose(seqlen, d, causal, dtype):
+    """We previously had a bug where we were using the wrong strides of dout, which shows up
+    when dout is not contiguous.
+    """
+    device = "cuda"
+    # set seed
+    torch.random.manual_seed(0)
+    batch_size = 5
+    nheads = 2
+    q, k, v = [
+        torch.randn([batch_size, seqlen, nheads, d], dtype=dtype, device="cuda", requires_grad=True)
+        for _ in range(3)
+    ]
+    out = rearrange(flash_attn_func(q, k, v, causal=causal), "b s ... -> s b ...")
+    # So g is not contiguous
+    g = torch.randn(seqlen, 2 * batch_size, nheads, d, dtype=dtype, device="cuda")[:, ::2]
+    out.backward(g)
+    q_pt = q.detach().clone().requires_grad_(True)
+    k_pt = k.detach().clone().requires_grad_(True)
+    v_pt = v.detach().clone().requires_grad_(True)
+    out_pt, attn_pt = attention_ref(q_pt, k_pt, v_pt, causal=causal, upcast=False, reorder_ops=True)
+    out_pt = rearrange(out_pt, "b s ... -> s b ...")
+    out_pt.backward(g)
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+    out_ref, attn_ref = attention_ref(q_ref, k_ref, v_ref, causal=causal)
+    out_ref = rearrange(out_ref, "b s ... -> s b ...")
+    out_ref.backward(g)
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dQ max diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (q.grad - q_ref.grad).abs().max().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dK max diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (k.grad - k_ref.grad).abs().max().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dV max diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (v.grad - v_ref.grad).abs().max().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dQ Pytorch max diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (q_pt.grad - q_ref.grad).abs().max().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dK Pytorch max diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (k_pt.grad - k_ref.grad).abs().max().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dV Pytorch max diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (v_pt.grad - v_ref.grad).abs().max().item()}")
+
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dQ mean diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (q.grad - q_ref.grad).abs().mean().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dK mean diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (k.grad - k_ref.grad).abs().mean().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dV mean diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (v.grad - v_ref.grad).abs().mean().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dQ Pytorch mean diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (q_pt.grad - q_ref.grad).abs().mean().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dK Pytorch mean diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (k_pt.grad - k_ref.grad).abs().mean().item()}")
+    print(f"flash_attn_bwd_transpose, test_flash_attn_bwd_transpose dV Pytorch mean diff (seqlen, d, causal, dtype): {seqlen, d, causal, dtype, (v_pt.grad - v_ref.grad).abs().mean().item()}")
+````
+
+Complete data list: [MLU FA Accuracy Comparison](https://bytedance.larkoffice.com/sheets/WwFRsUF4Ehcquvt1dN2cVNqUnId?sheet=07997a)
+
+## Matmul Accuracy{/* Title Sequence: 3.3 */}
+
+mkn, m, n are fixed, e.g., 4096, K increases gradually from 2 to 2^15
+
+<MatmulAccuracyTable />
+
+```python
+import torch
+import torch_mlu
+import numpy as np
+import matplotlib.pyplot as plt
+
+def max_diff(name, custom, real):
+    real = real.reshape(-1)
+    custom = custom.reshape(-1)
+    max_index = torch.argmax(torch.abs(real - custom)/(custom+1e-10)).item()
+    real_val = real[max_index].item()
+    custom_val = custom[max_index].item()
+    print(f"  {name}" + "max diff", abs(real_val - custom_val), "relative diff", abs(real_val - custom_val)/(custom_val+1e-10), "index@", max_index, "real: ", real_val, "custom: ", custom_val)
+    return abs(real_val - custom_val)/(custom_val+1e-10)
+
+res = []
+for k in range(1,15):
+    np.random.seed(1)
+    kk = 2**k
+    input_np = np.random.random((4096, kk)).astype(np.float32)
+    weight_np = np.random.random((kk, 4096)).astype(np.float32)
+    input = torch.tensor(input_np, dtype=torch.bfloat16).mlu()
+    weight = torch.tensor(weight_np, dtype=torch.bfloat16).mlu()
+
+    gpu_res = torch.matmul(input, weight)
+
+    # print(f"npu output_dtype: {type(gpu_res.dtype)}")
+    # print(gpu_res)
+
+    cpu_input = input.cpu().double()
+    cpu_weight = weight.cpu().double()
+    cpu_res = torch.matmul(cpu_input, cpu_weight)
+    relative_error = max_diff(f"MLU: ", gpu_res.cpu().double(), cpu_res)
+    res.append(relative_error)
+print (res)
+
+#from GPU results
+GPU_res = [0.003906249999609375, 0.0039062499998046875, 0.0039062499999023437, 0.003906324505708311, 0.003906354308079527, 0.003906425088619613, 0.00390661880372734, 0.003906915837427085, 0.00390784253249571, 0.003910253508364186, 0.003917192556854533, 0.003934841540398863, 0.003975326564613885, 0.004062712657173407]
+input_x = [2**x for x in range(1,15)]
+
+# Create a figure and axis
+plt.figure(figsize=(10, 5))
+
+# Plotting both arrays
+plt.plot(input_x, res, label='MLU with different K for Matmul (MKN)', color='blue')
+plt.plot(input_x, GPU_res, label='GPU with different K for Matmul (MKN)', color='orange')
+
+                # Adding title and labels
+plt.title('Compare Matmul accuracy')
+plt.xlabel('2^x, x in range(1,15)')
+plt.ylabel('Relative Errors')
+
+# Adding a legend
+plt.legend()
+
+# Display the plot
+plt.grid(True)
+name = "matmul" + '_plot.png'
+plt.savefig(name, dpi=300)  # Can specify filename and resolution
+plt.close()
+```
+
+## Communication All-reduce Accuracy{/* Title Sequence: 3.4 */}
+
+<AllReduceAccuracyTable />
+
+```python
+import os
+import torch
+import torch_mlu
+from datetime import timedelta
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from collections import namedtuple
+import traceback
+import numpy as np
+import matplotlib.pyplot as plt
+
+np.random.seed(1)
+
+def create_float_normal(dtype, shape, variance=10):
+    # Generate random numbers with specified shape
+    random_data = np.random.rand(*shape).astype(np.float32) * variance  # Generate float32 random numbers first
+    res = torch.tensor(random_data, dtype=dtype)
+    return res
+
+def subprocess_func_normal(rank: int, *args):
+    try:
+        world_size, = args
+        torch.mlu.set_device(rank)
+
+        os.environ["MASTER_ADDR"] = "127.0.0.1"
+        os.environ["MASTER_PORT"] = "49373"
+        os.environ["LOCAL_RANK"] = str(rank)
+        os.environ["RANK"] = str(rank)
+        os.environ["WORLD_SIZE"] = str(world_size)
+
+        dist.init_process_group(
+            backend="cncl",
+            world_size=world_size,
+            rank=rank,
+            timeout=timedelta(seconds=1800)
+        )
+
+
+        # Eight numbers, randomly generated
+
+        values = [
+
+            create_float_normal(torch.bfloat16, shape=[1024]),
+            create_float_normal(torch.bfloat16, shape=[1024]),
+            create_float_normal( torch.bfloat16, shape=[1024]),
+            create_float_normal( torch.bfloat16, shape=[1024]),
+            create_float_normal( torch.bfloat16, shape=[1024]),
+            create_float_normal(torch.bfloat16, shape=[1024]),
+            create_float_normal( torch.bfloat16, shape=[1024]),
+            create_float_normal(torch.bfloat16, shape=[1024]),
+        ]
+
+        for exponent in range(0, 13):
+
+            # float64
+            fp64_golden_value = torch.zeros_like(values[0], dtype=torch.float64)
+            for i in range(world_size):
+                fp64_golden_value += values[i].type(torch.float64)
+
+            # float32
+            fp32_golden_value = torch.zeros_like(values[0], dtype=torch.float32)
+            for i in range(world_size):
+                fp32_golden_value += values[i].type(torch.float32)
+
+            # bfloat16
+            bf16_golden_value = torch.zeros_like(values[0], dtype=torch.bfloat16).mlu()
+            for i in range(world_size):
+                bf16_golden_value += values[i].type(torch.bfloat16).mlu()
+
+            # cncl
+            data = values[rank].mlu()
+            # dist.reduce(data, 0)
+            dist.all_reduce(data)
+
+            if rank == 0:
+                print(f"cncl all reduce ={data}, bfl16_golden_value={bf16_golden_value}, fp64_golden_value={fp64_golden_value} ")
+                data = data.cpu().double()
+                bf16_golden_value = bf16_golden_value.cpu().double()
+                mlu_relative= abs(data - fp64_golden_value)/(fp64_golden_value+1e-10)
+                cpu_relative= abs(data - bf16_golden_value)/(bf16_golden_value+1e-10)
+
+                # Create a figure and axis
+                plt.figure(figsize=(10, 5))
+
+                # Plotting both arrays
+                plt.plot(mlu_relative, label='mlu_relative v.s FP64 golden results', color='blue')
+                plt.plot(cpu_relative, label='mlu_relative v.s. CPU bfloat 16 all reduce', color='orange')
+
+                # Adding title and labels
+                plt.title('Compare MLU all reduce relative error to FP64 and CPU local all reduce')
+                plt.xlabel('Test Case 1024')
+                plt.ylabel('Relative Errors')
+
+                # Adding a legend
+                plt.legend()
+
+                # Display the plot
+                plt.grid(True)
+                name = "allreduce" + '_plot.png'
+                plt.savefig(name, dpi=300)  # Can specify filename and resolution
+                plt.close()
+
+    except Exception:
+        traceback.print_exc()
+
+    dist.destroy_process_group()
+
+if __name__ == "__main__":
+    device_num = 8
+    mp.set_start_method("spawn", force=True)
+    _subprocess = mp.spawn(
+        fn=subprocess_func_normal,
+        args=(device_num,),
+        nprocs=device_num,
+        join=False,
+        daemon=False
+    )
+    for process in _subprocess.processes:
+        process.join()
+```
+
+## Training Functional Test{/* Title Sequence: 4 */}
+
+### Test Environment{/* Title Sequence: 4.1 */}
+
+| **Device**             | **MLU590-M9DK**                                                                  | **A100-PCIE-40GB/-80GB** |
+| :--------------------- | :------------------------------------------------------------------------------- | :----------------------- |
+| cpu Model              | Intel(R) Xeon(R) Platinum 8480+                                                  | -                        |
+| CPU scaling_governor   | performance                                                                      | performance              |
+| Driver                 | v6.2.11                                                                          | 525.89.02                |
+| CPU irqbalance enabled | Yes                                                                              | Yes                      |
+| Docker                 | v1.27.0-torch2.5.0-x86_64-ubuntu22.04-20250603-211117-26e9edfe-r2.5_develop_3.10 | nvidia/pytorch:24.10-py3 |
+| Pytorch                | 2.5.0                                                                            | 2.5.0                    |
+
+ByteMLPerf：
+
+https://gitee.com/cambricon_bd/bytemlperf/tree/main_mlu_dev/
+
+Micro benchmark: main_mlu_dev branch, commit ID: f08fc546
+
+Training benchmark (FSDP, OOM): train-model-mlu branch, commit ID: 8cfbb91
+
+## Multi-stream and Timing Capability{/* Title Sequence: 4.2 */}
+
+**Multi-stream Parallel Capability**
+
+<MultiStreamCapabilityTable />
+
+<MultiStreamDetailTable />
+
+**Event Timing Capability**
+
+| Capability Item | Requirement and Standard                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Solution                                                                                                                                                                                                                                                                                                                                                                                                                                       | Test Result                                               | Comments                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| :-------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Event Timing    | **Requirement**: Verify the accuracy of the time recording interfaces provided by Cambricon. The two interfaces are start_event.hardware_time(end_event) and start_event.elapsed_time(end_event).<br/>**Standard**: In terms of correctness verification, it needs to be compared with the hardware operator performance of torch.profiler. Since elapsed_time capture uses timestamps, which include kernel launch and kernel gap times, affecting accuracy, the threshold is set to less than 1ms.<br/>While hardware_time records hardware time, so the threshold is set to less than 10us. | 1. e2e time comparison: Use start_event.elapse_time(end_event) and time.time to capture the execution time of torch.matmul multiple times respectively, and then compare the error between the two.<br/>2. HW time comparison: Use start_event.hardware_time(end_event) to capture the execution time of all hardware operators in e2e execution. While prof HW time is the hardware time statistics captured by torch.profiler in trace.json. | Passed, E2E error within 1%~2%, hardware time within 0.1% | 1. In e2e time comparison, when the operator scale is small, the relative error can reach the 1e-2 level. Compared with hardware time, it can be found that the error of start_event.elapse_time is small, while the e2e time error obtained by time.time is large and greatly affected by cpu.<br/>2. In Hardware time comparison, when the execution scale is small, the relative error can reach the 1e-3 level, while when the execution scale is larger, the relative error approaches 0. |
+
+Test Results
+
+e2e error = abs(host_latency - Avg_latency) / (Avg_latency)
+
+hw error = abs(prof_HW_time - HW_time) / (HW_time)
+
+| **dtype** | **x_shape**    | **w_shape**   | **Avg latency(us)** | **host latency(us)** | **e2e error** | **HW time(us)** | **prof HW time(us)** | **hw error** |
+| :-------- | :------------- | :------------ | :------------------ | :------------------- | :------------ | :-------------- | :------------------- | :----------- |
+| bfloat16  | [16, 2048]     | [2048, 4096]  | 6291                | 6379.84              | 0.01412       | 6153            | 6124.44              | 0.00464      |
+| bfloat16  | [16, 16384]    | [16384, 8192] | 67745               | 67960.26             | 0.00318       | 67598           | 67567.76             | 0.00045      |
+| bfloat16  | [128, 2048]    | [2048, 4096]  | 9480                | 9512.54              | 0.00336       | 9346            | 9316.68              | 0.00314      |
+| bfloat16  | [128, 16384]   | [16384, 8192] | 82613               | 82893.37             | 0.00339       | 82493           | 82463.56             | 0.00036      |
+| bfloat16  | [1024, 2048]   | [2048, 4096]  | 44563               | 44773.82             | 0.00473       | 44455           | 44425.36             | 0.00067      |
+| bfloat16  | [1024, 16384]  | [16384, 8192] | 628015.99           | 635898.83            | 0.01255       | 627873          | 627843.16            | 5E-05        |
+| bfloat16  | [8192, 2048]   | [2048, 4096]  | 312505              | 319964.65            | 0.02387       | 312365          | 312335.88            | 9E-05        |
+| bfloat16  | [8192, 16384]  | [16384, 8192] | 5470687.99          | 5485998.87           | 0.0028        | 5470536         | 5470506.32           | 1E-05        |
+| bfloat16  | [32768, 2048]  | [2048, 4096]  | 1261188.96          | 1263989.93           | 0.00222       | 1261038         | 1261007.88           | 2E-05        |
+| bfloat16  | [32768, 16384] | [16384, 8192] | 22342845.7          | 22376060.01          | 0.00149       | 22342574        | 22342543.08          | 0            |
+| float32   | [16, 2048]     | [2048, 4096]  | 10396.24            | 10411.0              | 0.00142       | 10310           | 10281.52             | 0.00276      |
+| float32   | [16, 16384]    | [16384, 8192] | 133853              | 136007.55            | 0.0161        | 133742          | 133712.12            | 0.00022      |
+| float32   | [128, 2048]    | [2048, 4096]  | 24130               | 23948.91             | 0.0075        | 23875           | 23845.96             | 0.00122      |
+| float32   | [128, 16384]   | [16384, 8192] | 307162.99           | 307302.24            | 0.00045       | 307047          | 307016.12            | 0.0001       |
+| float32   | [1024, 2048]   | [2048, 4096]  | 156366              | 159957.41            | 0.02297       | 156212          | 156182.36            | 0.00019      |
+| float32   | [1024, 16384]  | [16384, 8192] | 2568527.1           | 2587952.38           | 0.00756       | 2568362         | 2568332.6            | 1E-05        |
+| float32   | [8192, 2048]   | [2048, 4096]  | 1232874.02          | 1235960.48           | 0.0025        | 1232750         | 1232719.32           | 2E-05        |
+| float32   | [8192, 16384]  | [16384, 8192] | 20913009.77         | 20934176.45          | 0.00101       | 20912710        | 20912678.76          | 0            |
+| float32   | [32768, 2048]  | [2048, 4096]  | 5145954.1           | 5159537.08           | 0.00264       | 5145800         | 5145771.32           | 1E-05        |
+| float32   | [32768, 16384] | [16384, 8192] | 84066554.69         | 84052087.55          | 0.00017       | 84066120        | 84066068.32          | 0            |
+
+## Operator Determinism{/* Title Sequence: 4.3 */}
+
+<DeterminismTable />
+
+**Potential Risk**: There is no function for specifying topology and algorithm for communication, scheduling is in progress.
+
+## Training LLM Test{/* Title Sequence: 5 */}
+
+### FSDP Training Accuracy{/* Title Sequence: 5.1 */}
+
+:::info
+
+<div>
+Using Pytorch FSDP parallel strategy, compare loss curves under the same model, seed, and initial parameters.
+1. Average relative error 0.0332% **< 0.2%, meets requirement,&nbsp;**maximum relative error 0.1552% **< 0.2%, meets requirement.**
+2. Loss comparison of the last 50 steps: average relative error 0.0267% **< 0.2%, meets requirement.**
+</div>
+:::
+
+<FsdpAccuracyTable />
+
+## Training OOM Test{/* Title Sequence: 5.2 */}
+
+:::info
+
+<div>
+**Test Purpose**: 1) Test memory stability (max_memory_allocated, max_memory_reserved); 2) Memory fragmentation handling capability (max_memory_reserved - max_memory_allocated)
+**Test Conclusion**: MLU memory usage is stable, slightly lower than GPU (< 0.2%). Fragmentation handling capability is also comparable to GPU.
+</div>
+:::
+### Test Method{/* Title Sequence: 5.2.1 */}
+| | **Memory Stability Test** | **Memory Fragmentation Handling Test** |
+| :--- | :--- | :--- |
+| Test Model | GPT3 345M | GPT3 345M |
+| seq_length | 32K | 32K - drop(1K ~ 10K), step is 1K |
+| Test Epochs | 2000 iters | 2000iters |
+| Test Standard | mlu memory {"<="} gpu memory passed | - mlu memory > gpu memory and (mlu memory - gpu memory) / gpu memory < 0.2% passed |
+
+### Test Results{/* Title Sequence: 5.2.2 */}
+
+#### Memory Stability Test{/* Title Sequence: 5.2.2.1 */}
+
+32K Input Length
+
+<MemoryStabilityTable />
+
+#### **Memory Fragmentation Handling Test**{/* Title Sequence: 5.2.2.2 */}
+
+:::info
+
+<div>
+Test conditions: 32K sequence length, drop(1K ~ 10K), step is 1K input
+1. Using fixed length and variable length Seq for testing, MLU and GPU memory can both stabilize at close values, error < 0.2%.
+2. Under fixed length condition, GPU memory fragmentation value is 979.35MB, MLU memory fragmentation value is 907.35MB, memory fragmentation size is stable during long-term training.
+3. Under variable length condition, GPU memory fragmentation value is 884.88MB, MLU memory fragmentation value is 910.88MB, memory fragmentation size is stable during long-term training.
+The above differences are affected by the framework memory management mechanism, for example, Torch MLU's memory management page size (16MB) is different from GPU (2MB).
+</div>
+:::
+
+<MemoryFragmentationTable />
+
+## GPU-MLU Accuracy Comparison (WIP){/* Title Sequence: 5.3 */}
+
+:::info Test Plan
+
+<div>
+  Based on Deepseekv3 and M8 models, three models MOE-21B, MOE-24B, and MOE-66B
+  were designed. For the last 3K steps, the average relative error of loss is
+  less than 0.2%. Test Conclusion: In 16-card and 32-card cases, the accuracy
+  meets the requirements. **240 cards are currently in training.**
+</div>
+:::
+
+| **Device** | **pytorch Version** | **Transformer Engine Version** | **flash attention Version** |
+| :--------- | :------------------ | :----------------------------- | :-------------------------- |
+| M9DK       | 2.5.0               | 1.11.0                         | 2.4.3                       |
+| GPU        | 2.5.1               | 1.11.0                         | 2.4.2                       |
+
+### Loss Curve Comparison{/* Title Sequence: 5.3.1 */}
+
+<GpuMluLossCompareTable />
+
+**30 Machines 240 Cards Analysis**
+
+Model Training Detailed Parameters:
+
+<TrainingConfigTable />
+
+## Training LLM Performance Results (WIP){/* Title Sequence: 6 */}
+
+30 machines 240 cards, optimal parallel solution throughput
+
+Analysis method, how to determine parallel solution, theoretical performance, actual performance.
+
+TP/PP/EP/DP common four parallel solutions.
+
+129 machines, thousand-card scale, communication data (Discuss with Ye Lu)
+
+## Appendix: Log Record{/* Title Sequence: 7 */}
+
+2 machines 16 cards
+
+M9DK log:
+
+<FileCard
+  displayMode="text"
+  title="file_0425_A100_2nodes_layers14_loadckpt_drop.log"
+  filePath="/blog/data/file_0425_A100_2nodes_layers14_loadckpt_drop.log"
+  fileName="file_0425_A100_2nodes_layers14_loadckpt_drop.log.log"
+/>
+
+H800 log:
+
+<FileCard
+  displayMode="text"
+  title="file_two_machines_dropout_attn0.1_mlp0.1_work1_4.27.log"
+  filePath="/blog/data/file_两机dropout_attn0.1_mlp0.1_work1_4.27.log"
+  fileName="file_two_machines_dropout_attn0.1_mlp0.1_work1_4.27.log"
+/>
+
+ByteDance Internal Training Trial: https://ml.bytedance.net/development/instance/jobs/8cf72f112d8886da?instanceId=1008510765&roleName=worker_1&tabState=log&trialId=44699680&view=full_view
+
+4 machines 32 cards
+
+| Total step count | H800/MLU590-M9DK Average Relative Error | Description                                                                                             |
+| :--------------- | :-------------------------------------- | :------------------------------------------------------------------------------------------------------ |
+| 7669             | 0.2328%                                 | Remove 3 LOSS Spike data points on H800, total 153iter.<br/>- 1590-1690<br/>- 1932-1952<br/>- 2023-2053 |
+| 2983             | **0.084%**                              | Includes 5000 to 7982 iter                                                                              |
+
+**Experiment 1:** Four-machine training, attention, mlp dropout rate are both 0.1, resume from ckpt 159
+
+<FileCard
+  displayMode="text"
+  title="file_four_machines_training_drop0.1_5.6.log"
+  filePath="/blog/data/file_四机训练_drop0.1_5.6.log"
+  fileName="file_four_machines_training_drop.log.log"
+/>
+
+<FileCard
+  displayMode="text"
+  title="file_four_machines_training_worker0_5.6.log"
+  filePath="/blog/data/file_四机训练_worker0_5.6.log"
+  fileName="file_four_machines_training_worker.log.log"
+/>
+
+ByteDance Internal Training Trial: https://ml.bytedance.net/development/instance/jobs/8096e73f197c6611?instanceId=1015672910&roleName=worker_0&tabState=log&trialId=45040327&view=full_view
+
+M9K log:
+
+<FileCard
+  displayMode="text"
+  title="file_m9dk_dropout_attn0.1_mlp0.1_work1_32nodes.txt"
+  filePath="/blog/data/file_m9dk_dropout_attn0.1_mlp0.1_work1_32nodes.txt"
+  fileName="/blog/data/file_m9dk_dropout_attn0.1_mlp0.1_work1_32nodes.txt"
+/>
+
+30 machines 240 cards
+
+Training in progress, ByteDance Internal Trial: https://ml.bytedance.net/development/instance/jobs/ea457151f218893d?tabState=run_info&trialId=46709785
+
+**OOM Test Script**
+
+Test Script:
+
+<FileCard
+  displayMode="text"
+  title="file_oom-gpt3-345m.py"
+  filePath="/blog/data/file_oom-gpt3-345m.py"
+  fileName="/blog/data/file_oom-gpt3-345m.py"
+/>
+
+Using GPU log as baseline, use memory comparison analysis tool to parse memory data in GPU log and MLU log, compare, and draw curve graph.
+
+## Appendix: FA Accuracy Data{/* Title Sequence: 8 */}
+
+## Appendix: 240 Card Analysis{/* Title Sequence: 9 */}
+
+**Loss Curve Analysis:&nbsp;**
+
+<LossAnalysis240Table />
+
+**Wave Line Cause Analysis**
+
+<WaveLossAnalysisTable />
+
+Based on the above two phenomena, it is suspected that expert load imbalance may cause:
+
+1. Large difference in gradient distribution between experts, leading to loss fluctuation.
+
+2. When less updated experts are selected, it leads to loss fluctuation.
+
+## Reference:{/* Title Sequence: 10 */}
+
+[1] [【MLU】ByteMLPerf-Micro/FSDP/OOM Test Report](https://xlcajaydc1.feishu.cn/docx/A2m5dPUjwoWb3dxsDAVcNPX9nbg?from=from_copylink) and [【MLU】ByteMLPerf-Micro/FSDP/OOM Test Report-25.06](https://rcn34idmz22i.feishu.cn/wiki/NIBDws9XeiDjEpkrWJUcGu3rnSf)
+
+[2] [【MLU】DS-Like Test Plan](https://xlcajaydc1.feishu.cn/docx/RSMXdVkdWoz8Dpx4vFpcTrBYnAc)
+
+[3] [【MLU】ByteMLPerf Training Test Plan Summary](https://xlcajaydc1.feishu.cn/docx/ZKHmdPL6wo47KAxooyZcsB4enWc?from=from_copylink)
+
+[4] [DS-Like 2 Machines, 4 Machines Accuracy Test Results](https://xlcajaydc1.feishu.cn/docx/GFIgdTYfKocOTZx3iuTc1DZWnyh?from=from_copylink)
+
+[5][【Heterogeneous Hardware】ByteMlPerf Training Evaluation Plan](https://bytedance.larkoffice.com/docx/G3zndk3W2ojR4fx11bBc3UHKnze?from=from_copylink)

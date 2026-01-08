@@ -149,6 +149,7 @@ export default defineConfig({
         '@builtIns': path.join(__dirname, 'components', 'builtIns'),
         '@components': path.join(__dirname, 'components'),
         '@hooks': path.join(__dirname, 'hooks'),
+        '@blog': path.join(__dirname, 'theme', 'components', 'Blog'),
       },
     },
     tools: {
